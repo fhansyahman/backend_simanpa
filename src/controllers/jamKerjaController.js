@@ -16,27 +16,56 @@ const extractCoordinatesFromMapsLink = async (mapsLink) => {
                 const response = await axios.get(mapsLink, { 
                     maxRedirects: 5, 
                     validateStatus: false,
-                    timeout: 10000
+                    timeout: 10000,
+                    // Important: Follow redirects manually if needed
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                    }
                 });
-                if (response.request.res.responseUrl) {
+                
+                // Try different ways to get final URL
+                if (response.request && response.request.res && response.request.res.responseUrl) {
                     finalUrl = response.request.res.responseUrl;
-                    console.log('🔄 Redirected URL:', finalUrl);
+                } else if (response.request && response.request.path) {
+                    finalUrl = response.request.path;
+                } else if (response.config && response.config.url) {
+                    finalUrl = response.config.url;
                 }
+                
+                console.log('🔄 Redirected URL:', finalUrl);
             } catch (redirectError) {
-                console.warn('⚠️ Redirect gagal, lanjut dengan link asli');
+                console.warn('⚠️ Redirect gagal, lanjut dengan link asli:', redirectError.message);
             }
         }
         
-        // STEP 2: EKSTRAKSI KOORDINAT
+        // STEP 2: Decode URL terlebih dahulu untuk menangani encoded characters
+        try {
+            finalUrl = decodeURIComponent(finalUrl);
+            console.log('🔓 Decoded URL:', finalUrl);
+        } catch (e) {
+            console.log('URL tidak perlu di-decode');
+        }
+        
+        // STEP 3: EKSTRAKSI KOORDINAT (dengan urutan prioritas yang lebih baik)
         let latitude = null;
         let longitude = null;
         
-        // POLA 1: Format !8m2!3dLATITUDE!4dLONGITUDE
-        let match = finalUrl.match(/!8m2!3d([-\d.]+)!4d([-\d.]+)/);
+        // POLA 0: Format place dengan koordinat (Google Maps baru)
+        let match = finalUrl.match(/place\/.*?\/@([-\d.]+),([-\d.]+)/);
         if (match) {
             latitude = parseFloat(match[1]);
             longitude = parseFloat(match[2]);
-            console.log('✅ Pattern !8m2!3d!4d matched:', { latitude, longitude });
+            console.log('✅ Pattern place/@ matched:', { latitude, longitude });
+        }
+        
+        // POLA 1: Format !8m2!3dLATITUDE!4dLONGITUDE (most reliable for shared links)
+        if (!latitude || !longitude) {
+            match = finalUrl.match(/!8m2!3d([-\d.]+)!4d([-\d.]+)/);
+            if (match) {
+                latitude = parseFloat(match[1]);
+                longitude = parseFloat(match[2]);
+                console.log('✅ Pattern !8m2!3d!4d matched:', { latitude, longitude });
+            }
         }
         
         // POLA 2: Format !3dLATITUDE!4dLONGITUDE
@@ -49,9 +78,9 @@ const extractCoordinatesFromMapsLink = async (mapsLink) => {
             }
         }
         
-        // POLA 3: Format @latitude,longitude
+        // POLA 3: Format @latitude,longitude (priority pattern)
         if (!latitude || !longitude) {
-            match = finalUrl.match(/@([-\d.]+),([-\d.]+)/);
+            match = finalUrl.match(/@([-\d.]+),([-\d.]+)(?:,|z|\/|$)/);
             if (match) {
                 latitude = parseFloat(match[1]);
                 longitude = parseFloat(match[2]);
@@ -59,13 +88,13 @@ const extractCoordinatesFromMapsLink = async (mapsLink) => {
             }
         }
         
-        // POLA 4: Format /search/latitude,longitude
+        // POLA 4: Format /@latitude,longitude
         if (!latitude || !longitude) {
-            match = finalUrl.match(/\/search\/([-\d.]+),([-\d.]+)/);
+            match = finalUrl.match(/\/@([-\d.]+),([-\d.]+)/);
             if (match) {
                 latitude = parseFloat(match[1]);
                 longitude = parseFloat(match[2]);
-                console.log('✅ Pattern search matched:', { latitude, longitude });
+                console.log('✅ Pattern /@ matched:', { latitude, longitude });
             }
         }
         
@@ -79,42 +108,116 @@ const extractCoordinatesFromMapsLink = async (mapsLink) => {
             }
         }
         
-        // POLA 6: Format koordinat biasa
+        // POLA 6: Format /search/latitude,longitude
         if (!latitude || !longitude) {
-            match = finalUrl.match(/([-\d.]+),([-\d.]+)(?:\/|$|\?|&)/);
+            match = finalUrl.match(/\/search\/([-\d.]+),([-\d.]+)/);
             if (match) {
                 latitude = parseFloat(match[1]);
                 longitude = parseFloat(match[2]);
-                console.log('✅ Pattern simple matched:', { latitude, longitude });
+                console.log('✅ Pattern search matched:', { latitude, longitude });
             }
         }
         
-        // VALIDASI
+        // POLA 7: Format coordinate pairs with zoom level @lat,lng,z
+        if (!latitude || !longitude) {
+            match = finalUrl.match(/[?&]ll=([-\d.]+),([-\d.]+)/);
+            if (match) {
+                latitude = parseFloat(match[1]);
+                longitude = parseFloat(match[2]);
+                console.log('✅ Pattern ll= matched:', { latitude, longitude });
+            }
+        }
+        
+        // POLA 8: Format coordinate pairs in path
+        if (!latitude || !longitude) {
+            match = finalUrl.match(/\/([-\d.]+),([-\d.]+)(?:\/|\?|&|$)/);
+            if (match) {
+                latitude = parseFloat(match[1]);
+                longitude = parseFloat(match[2]);
+                console.log('✅ Pattern path matched:', { latitude, longitude });
+            }
+        }
+        
+        // POLA 9: Extract from data parameter
+        if (!latitude || !longitude) {
+            match = finalUrl.match(/!1s([^!]*?)!2s([^!]*?)!3s?/);
+            // Complex pattern for certain Google Maps formats
+            const latMatch = finalUrl.match(/!3d([-\d.]+)/);
+            const lngMatch = finalUrl.match(/!4d([-\d.]+)/);
+            if (latMatch && lngMatch) {
+                latitude = parseFloat(latMatch[1]);
+                longitude = parseFloat(lngMatch[1]);
+                console.log('✅ Pattern !3d and !4d separate matched:', { latitude, longitude });
+            }
+        }
+        
+        // VALIDASI dan KOREKSI
         if (latitude !== null && longitude !== null && !isNaN(latitude) && !isNaN(longitude)) {
+            // Validasi range koordinat
             if (latitude >= -90 && latitude <= 90 && longitude >= -180 && longitude <= 180) {
+                // Bulatkan ke 6 desimal untuk konsistensi
+                latitude = parseFloat(latitude.toFixed(6));
+                longitude = parseFloat(longitude.toFixed(6));
                 console.log('🎉 Final valid coordinates:', { latitude, longitude });
                 return { latitude, longitude };
-            } else {
+            } 
+            // Coba tukar jika latitude keluar range (common issue)
+            else if (longitude >= -90 && longitude <= 90 && latitude >= -180 && latitude <= 180) {
+                console.log('🔄 Mencoba menukar koordinat...');
+                const swappedLat = parseFloat(longitude.toFixed(6));
+                const swappedLng = parseFloat(latitude.toFixed(6));
+                console.log('✅ Koordinat setelah ditukar valid:', { latitude: swappedLat, longitude: swappedLng });
+                return { latitude: swappedLat, longitude: swappedLng };
+            }
+            else {
                 console.error('❌ Koordinat tidak valid:', { latitude, longitude });
-                if (latitude > 90 && longitude >= -90 && longitude <= 90) {
-                    console.log('🔄 Mencoba menukar koordinat...');
-                    const swappedLat = longitude;
-                    const swappedLng = latitude;
-                    if (swappedLat >= -90 && swappedLat <= 90 && swappedLng >= -180 && swappedLng <= 180) {
-                        console.log('✅ Koordinat setelah ditukar valid:', { latitude: swappedLat, longitude: swappedLng });
-                        return { latitude: swappedLat, longitude: swappedLng };
-                    }
-                }
                 return null;
             }
         }
         
+        // Jika semua pola gagal, coba satu pendekatan terakhir
+        console.log('⚠️ Mencoba pendekatan regex komprehensif...');
+        const allNumbers = finalUrl.match(/-?\d+\.\d+/g);
+        if (allNumbers && allNumbers.length >= 2) {
+            // Coba pasangan angka pertama yang masuk akal sebagai koordinat
+            for (let i = 0; i < allNumbers.length - 1; i++) {
+                const lat = parseFloat(allNumbers[i]);
+                const lng = parseFloat(allNumbers[i + 1]);
+                if (lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+                    console.log('✅ Found coordinates via fallback method:', { latitude: lat, longitude: lng });
+                    return { latitude: lat, longitude: lng };
+                }
+            }
+        }
+        
         console.error('❌ Tidak ada pattern yang cocok untuk URL:', finalUrl);
+        console.log('📝 URL structure:', finalUrl.split('').map(c => c.charCodeAt(0) > 127 ? `[${c}]` : c).join(''));
         throw new Error('Format link tidak dikenali');
         
     } catch (error) {
-        console.error('❌ Error extracting coordinates:', error);
+        console.error('❌ Error extracting coordinates:', error.message);
         return null;
+    }
+};
+
+// Contoh penggunaan dengan berbagai format link
+const testLinks = async () => {
+    const links = [
+        'https://maps.app.goo.gl/example', // Ganti dengan link real
+        'https://www.google.com/maps/place/Jakarta/@-6.2088,106.8456,15z',
+        'https://www.google.com/maps/search/-6.2088,106.8456',
+        'https://www.google.com/maps?q=-6.2088,106.8456'
+    ];
+    
+    for (const link of links) {
+        console.log('\n' + '='.repeat(50));
+        const coords = await extractCoordinatesFromMapsLink(link);
+        if (coords) {
+            console.log('✅ Success:', coords);
+            console.log(`Google Maps URL: https://www.google.com/maps?q=${coords.latitude},${coords.longitude}`);
+        } else {
+            console.log('❌ Failed to extract coordinates');
+        }
     }
 };
 
