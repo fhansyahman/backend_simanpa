@@ -242,22 +242,22 @@ const generatePresensiForDate = async (targetDate) => {
           generatedCount++;
           izinCount++;
           console.log(`  ✅ Created with izin: ${izin.jenis}`);
-        } else {
-          // Buat presensi dengan penugasan yang sesuai
-          await pool.execute(
-            `INSERT INTO presensi 
-             (user_id, tanggal, penugasan_id, is_penugasan_khusus, status_masuk, is_system_generated, created_at, updated_at) 
-             VALUES (?, ?, ?, ?, 'Belum Presensi', 1, NOW(), NOW())`,
-            [
-              user.id, 
-              targetDate,
-              penugasan ? penugasan.id : null,
-              penugasan ? (penugasan.is_penugasan_khusus ? 1 : 0) : 0
-            ]
-          );
-          generatedCount++;
-          console.log(`  📝 Created presensi with default status 'Belum Presensi' - Penugasan: ${penugasan ? penugasan.nama_penugasan : 'Tidak ada'}`);
-        }
+ } else {
+  // Buat presensi TANPA mengisi status_masuk (biarkan NULL)
+  await pool.execute(
+    `INSERT INTO presensi 
+     (user_id, tanggal, penugasan_id, is_penugasan_khusus, is_system_generated, created_at, updated_at) 
+     VALUES (?, ?, ?, ?, 1, NOW(), NOW())`,
+    [
+      user.id, 
+      targetDate,
+      penugasan ? penugasan.id : null,
+      penugasan ? (penugasan.is_penugasan_khusus ? 1 : 0) : 0
+    ]
+  );
+  generatedCount++;
+  console.log(`  📝 Created presensi record (status_masuk akan diisi saat presensi)`);
+}
       } catch (error) {
         console.error(`  ❌ ERROR:`, error.message);
       }
@@ -1044,7 +1044,7 @@ const presensiMasuk = async (req, res) => {
     if (now > batasTerlambatToday) {
       statusMasuk = 'Terlambat Berat';
     } else if (now > jamMasukStandarToday) {
-      statusMasuk = 'Terlambat';
+      statusMasuk = 'Tepat Waktu';
     }
 
     console.log('✅ Status masuk determined:', statusMasuk);

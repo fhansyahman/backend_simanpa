@@ -311,11 +311,11 @@ const generatePresensiForTargetDate = async (targetDate) => {
           
           // Fallback: Insert minimal
           await pool.execute(
-            `INSERT INTO presensi 
-             (user_id, tanggal, is_system_generated, created_at, updated_at) 
-             VALUES (?, ?, 1, NOW(), NOW())`,
-            [user.id, targetDate]
-          );
+    `INSERT INTO presensi 
+     (user_id, tanggal, status_pulang, is_system_generated) 
+     VALUES (?, ?, 'Belum Pulang', 1)`,
+    [user.id, targetDate]
+);
           
           generatedCount++;
           console.log(`✅ Fallback successful for user ${user.id}`);

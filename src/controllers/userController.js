@@ -237,7 +237,7 @@ const createUser = async (req, res) => {
       jenis_kelamin,
       pendidikan_terakhir,
       telegram_id,
-      jam_kerja_id,
+      // jam_kerja_id, // HAPUS BARIS INI - kolom tidak ada di tabel
       can_remote,
       status,
       foto
@@ -245,6 +245,7 @@ const createUser = async (req, res) => {
 
     console.log(`📥 Request create user: ${nama}`);
     console.log(`📸 Ada foto: ${!!foto}`);
+    console.log(`📍 Wilayah penugasan: ${wilayah_penugasan || 'Tidak diisi'}`);
 
     // Validasi required fields
     if (!nama || !username || !password || !jabatan || !roles || !status) {
@@ -301,13 +302,13 @@ const createUser = async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Insert user baru
+    // Insert user baru - HAPUS jam_kerja_id dari query
     const [result] = await connection.execute(
       `INSERT INTO users 
        (nama, username, password, no_hp, jabatan, roles, wilayah_penugasan,
         tempat_lahir, tanggal_lahir, alamat, jenis_kelamin, pendidikan_terakhir,
-        telegram_id, jam_kerja_id, can_remote, status, foto) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        telegram_id, can_remote, status, foto) 
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         nama,
         username,
@@ -322,9 +323,8 @@ const createUser = async (req, res) => {
         jenis_kelamin || null,
         pendidikan_terakhir || null,
         telegram_id || null,
-        jam_kerja_id || null,
-        can_remote || 0,
-        status,
+        can_remote !== undefined ? can_remote : 0,
+        status || 'Aktif',
         fotoPath
       ]
     );
@@ -332,7 +332,7 @@ const createUser = async (req, res) => {
     // Log activity
     await connection.execute(
       'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['CREATE_USER', `Admin membuat user baru: ${nama} (${username})`, req.user?.id || 1]
+      ['CREATE_USER', `Admin membuat user baru: ${nama} (${username}) dengan wilayah ${wilayah_penugasan || 'tidak ada'}`, req.user?.id || 1]
     );
 
     await connection.release();
@@ -357,11 +357,14 @@ const createUser = async (req, res) => {
       errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
     } else if (error.message.includes('Ukuran foto terlalu besar')) {
       errorMessage = error.message;
+    } else if (error.code === 'ER_BAD_FIELD_ERROR') {
+      errorMessage = 'Terjadi kesalahan struktur database. Silakan cek kembali field yang diisi.';
     }
     
     res.status(500).json({
       success: false,
-      message: errorMessage
+      message: errorMessage,
+      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };
@@ -385,19 +388,20 @@ const updateUser = async (req, res) => {
       jenis_kelamin,
       pendidikan_terakhir,
       telegram_id,
-      jam_kerja_id,
+      // jam_kerja_id, // HAPUS BARIS INI - kolom tidak ada di tabel
       can_remote,
       foto
     } = req.body;
 
     console.log(`📥 Request update user ID: ${id}`);
     console.log(`📸 Ada foto: ${!!foto}`);
+    console.log(`📍 Wilayah penugasan: ${wilayah_penugasan || 'Tidak diisi'}`);
 
     connection = await pool.getConnection();
 
     // Cek apakah user exists
     const [existingUsers] = await connection.execute(
-      'SELECT id, foto, nama FROM users WHERE id = ?',
+      'SELECT id, foto, nama, wilayah_penugasan FROM users WHERE id = ?',
       [id]
     );
 
@@ -441,7 +445,9 @@ const updateUser = async (req, res) => {
         }
         
         // Hapus foto lama jika bukan default
-        deleteFile(fotoPath);
+        if (fotoPath && !fotoPath.includes('default.png')) {
+          deleteFile(fotoPath);
+        }
         
         // Simpan foto baru
         fotoPath = saveBase64Image(optimizedFoto, 'users');
@@ -452,13 +458,26 @@ const updateUser = async (req, res) => {
       }
     }
 
-    // Update user
+    // Update user - HAPUS jam_kerja_id dari query
     await connection.execute(
       `UPDATE users SET 
-        nama = ?, username = ?, no_hp = ?, jabatan = ?, roles = ?,
-        status = ?, is_active = ?, wilayah_penugasan = ?, tempat_lahir = ?,
-        tanggal_lahir = ?, alamat = ?, jenis_kelamin = ?, pendidikan_terakhir = ?,
-        telegram_id = ?, jam_kerja_id = ?, can_remote = ?, foto = ?, updated_at = NOW()
+        nama = ?, 
+        username = ?, 
+        no_hp = ?, 
+        jabatan = ?, 
+        roles = ?,
+        status = ?, 
+        is_active = ?, 
+        wilayah_penugasan = ?,
+        tempat_lahir = ?,
+        tanggal_lahir = ?, 
+        alamat = ?, 
+        jenis_kelamin = ?, 
+        pendidikan_terakhir = ?,
+        telegram_id = ?, 
+        can_remote = ?, 
+        foto = ?, 
+        updated_at = NOW()
        WHERE id = ?`,
       [
         nama,
@@ -475,17 +494,20 @@ const updateUser = async (req, res) => {
         jenis_kelamin || null,
         pendidikan_terakhir || null,
         telegram_id || null,
-        jam_kerja_id || null,
-        can_remote || 0,
+        can_remote !== undefined ? can_remote : 0,
         fotoPath,
         id
       ]
     );
 
-    // Log activity
+    // Log activity dengan mencatat perubahan wilayah penugasan
+    const wilayahChanged = currentUser.wilayah_penugasan !== wilayah_penugasan;
+    const logMessage = `Admin mengupdate user: ${nama} (ID: ${id})` + 
+                      (wilayahChanged ? `, wilayah penugasan: ${currentUser.wilayah_penugasan || 'kosong'} → ${wilayah_penugasan || 'kosong'}` : '');
+    
     await connection.execute(
       'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['UPDATE_USER', `Admin mengupdate user: ${nama} (ID: ${id})`, req.user?.id || 1]
+      ['UPDATE_USER', logMessage, req.user?.id || 1]
     );
 
     await connection.release();
@@ -494,7 +516,11 @@ const updateUser = async (req, res) => {
 
     res.json({
       success: true,
-      message: 'User berhasil diupdate'
+      message: 'User berhasil diupdate',
+      data: {
+        id: parseInt(id),
+        wilayah_penugasan: wilayah_penugasan || null
+      }
     });
 
   } catch (error) {
@@ -506,11 +532,14 @@ const updateUser = async (req, res) => {
       errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
     } else if (error.message.includes('Ukuran foto terlalu besar')) {
       errorMessage = error.message;
+    } else if (error.code === 'ER_BAD_FIELD_ERROR') {
+      errorMessage = 'Terjadi kesalahan struktur database. Silakan cek kembali field yang diisi.';
     }
     
     res.status(500).json({
       success: false,
-      message: errorMessage
+      message: errorMessage,
+      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
     });
   }
 };

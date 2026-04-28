@@ -485,10 +485,11 @@ const generatePresensiHariIni = async (req, res) => {
       );
 
       if (existing.length === 0) {
+        // ✅ PERBAIKAN DI SINI - HAPUS status_masuk
         await pool.execute(
           `INSERT INTO presensi 
-           (user_id, tanggal, status_masuk, status_pulang, is_system_generated) 
-           VALUES (?, ?, 'Belum Presensi', 'Belum Pulang', 1)`,
+           (user_id, tanggal, status_pulang, is_system_generated) 
+           VALUES (?, ?, 'Belum Pulang', 1)`,
           [user.id, today]
         );
         generatedCount++;
