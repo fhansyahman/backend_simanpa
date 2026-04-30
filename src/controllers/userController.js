@@ -1,675 +1,165 @@
-const { pool } = require('../config/database');
-const bcrypt = require('bcryptjs');
-const fs = require('fs');
-const path = require('path');
+const UserService = require('../services/userService');
 
-// File Utility Functions
-const ensureUploadsDir = () => {
-  const uploadsDir = path.join(__dirname, '../uploads');
-  if (!fs.existsSync(uploadsDir)) {
-    fs.mkdirSync(uploadsDir, { recursive: true });
-  }
-  return uploadsDir;
-};
-
-const saveBase64Image = (base64String, subfolder = 'users') => {
-  if (!base64String || !base64String.startsWith('data:image')) {
-    return null;
-  }
-  
-  try {
-    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
-      throw new Error('Invalid base64 string');
-    }
-
-    const imageType = matches[1];
-    const imageData = matches[2];
-    
-    // Ekstrak ekstensi file dari tipe MIME
-    const ext = imageType.split('/')[1] || 'png';
-    const filename = `user_${Date.now()}_${Math.random().toString(36).substring(2, 15)}.${ext}`;
-    const uploadsDir = ensureUploadsDir();
-    const subfolderDir = path.join(uploadsDir, subfolder);
-    
-    if (!fs.existsSync(subfolderDir)) {
-      fs.mkdirSync(subfolderDir, { recursive: true });
-    }
-    
-    const filePath = path.join(subfolderDir, filename);
-    const buffer = Buffer.from(imageData, 'base64');
-    
-    // Validasi ukuran file (max 500KB)
-    if (buffer.length > 500 * 1024) {
-      throw new Error('Ukuran foto terlalu besar (>500KB)');
-    }
-    
-    fs.writeFileSync(filePath, buffer);
-    
-    return `/uploads/${subfolder}/${filename}`;
-  } catch (error) {
-    console.error('Error saving base64 image:', error);
-    throw error;
-  }
-};
-
-const deleteFile = (filePath) => {
-  if (!filePath || filePath.includes('default.png')) {
-    return;
-  }
-  
-  try {
-    const fullPath = path.join(__dirname, '..', filePath);
-    if (fs.existsSync(fullPath)) {
-      fs.unlinkSync(fullPath);
-    }
-  } catch (error) {
-    console.error('Error deleting file:', error);
-  }
-};
-
-const getBase64FromFile = (filePath) => {
-  if (!filePath) {
-    return null;
-  }
-  
-  try {
-    const fullPath = path.join(__dirname, '..', filePath);
-    if (!fs.existsSync(fullPath)) {
-      return null;
-    }
-    
-    const fileBuffer = fs.readFileSync(fullPath);
-    const fileType = path.extname(filePath).toLowerCase().substring(1);
-    
-    // Tentukan tipe MIME berdasarkan ekstensi
-    const mimeTypes = {
-      'jpg': 'jpeg',
-      'jpeg': 'jpeg',
-      'png': 'png',
-      'gif': 'gif',
-      'webp': 'webp'
-    };
-    
-    const mimeType = mimeTypes[fileType] || 'png';
-    const base64 = fileBuffer.toString('base64');
-    
-    return `data:image/${mimeType};base64,${base64}`;
-  } catch (error) {
-    console.error('Error reading file:', error);
-    return null;
-  }
-};
-
-// Fungsi untuk optimasi gambar sebelum disimpan
-const optimizeImage = async (base64String) => {
-  try {
-    if (!base64String || !base64String.startsWith('data:image')) {
-      throw new Error('Format foto tidak valid');
-    }
-
-    const matches = base64String.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
-    if (!matches || matches.length !== 3) {
-      throw new Error('Invalid base64 string');
-    }
-
-    const imageData = matches[2];
-    const buffer = Buffer.from(imageData, 'base64');
-
-    // Gunakan sharp untuk optimasi jika tersedia
+const UserController = {
+  getAllUsers: async (req, res) => {
     try {
-      const sharp = require('sharp');
+      const users = await UserService.getAllUsers();
+      res.json({
+        success: true,
+        data: users
+      });
+    } catch (error) {
+      console.error('Get users error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Terjadi kesalahan server'
+      });
+    }
+  },
+
+  getUserById: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const user = await UserService.getUserById(id);
+      res.json({
+        success: true,
+        data: user
+      });
+    } catch (error) {
+      if (error.message === 'User tidak ditemukan') {
+        return res.status(404).json({
+          success: false,
+          message: error.message
+        });
+      }
+      console.error('Get user by id error:', error);
+      res.status(500).json({
+        success: false,
+        message: 'Terjadi kesalahan server'
+      });
+    }
+  },
+
+  createUser: async (req, res) => {
+    try {
+      console.log(`📥 Request create user: ${req.body.nama}`);
+      console.log(`📸 Ada foto: ${!!req.body.foto}`);
+      console.log(`📍 Wilayah penugasan: ${req.body.wilayah_penugasan || 'Tidak diisi'}`);
+
+      const insertId = await UserService.createUser(req.body, req.user?.id || 1);
       
-      const metadata = await sharp(buffer).metadata();
-      console.log(`📐 Dimensi asli: ${metadata.width}x${metadata.height}`);
-      console.log(`📁 Ukuran asli: ${(buffer.length / 1024).toFixed(2)} KB`);
+      console.log('✅ User berhasil dibuat:', insertId);
 
-      // Tentukan resize berdasarkan ukuran asli
-      let resizeOptions = { 
-        width: 400,
-        height: 400,
-        fit: 'cover',
-        withoutEnlargement: true 
-      };
-
-      // Kompres dan konversi ke JPEG dengan quality 80%
-      const optimizedBuffer = await sharp(buffer)
-        .resize(resizeOptions)
-        .jpeg({ 
-          quality: 80,
-          progressive: true 
-        })
-        .toBuffer();
-
-      console.log(`📁 Ukuran setelah optimasi: ${(optimizedBuffer.length / 1024).toFixed(2)} KB`);
-
-      // Konversi kembali ke base64
-      const mimeType = 'image/jpeg';
-      const base64 = optimizedBuffer.toString('base64');
-      return `data:${mimeType};base64,${base64}`;
+      res.json({
+        success: true,
+        message: 'User berhasil ditambahkan',
+        data: {
+          id: insertId
+        }
+      });
+    } catch (error) {
+      console.error('❌ Create user error:', error);
       
-    } catch (sharpError) {
-      console.log('⚠️ Sharp tidak tersedia, menggunakan gambar asli');
-      return base64String;
-    }
-    
-  } catch (error) {
-    console.error('❌ Error optimizing image:', error);
-    throw error;
-  }
-};
-
-// Controller Functions
-const getAllUsers = async (req, res) => {
-  try {
-    const [users] = await pool.execute(
-      `SELECT * FROM users 
-       ORDER BY nama`
-    );
-
-    // Convert foto paths ke base64 untuk response
-    const usersWithBase64 = users.map(user => ({
-      ...user,
-      foto: getBase64FromFile(user.foto)
-    }));
-
-    res.json({
-      success: true,
-      data: usersWithBase64
-    });
-
-  } catch (error) {
-    console.error('Get users error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Terjadi kesalahan server'
-    });
-  }
-};
-
-const getUserById = async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const [users] = await pool.execute(
-      `SELECT * FROM users WHERE id = ?`,
-      [id]
-    );
-
-    if (users.length === 0) {
-      return res.status(404).json({
-        success: false,
-        message: 'User tidak ditemukan'
-      });
-    }
-
-    const user = users[0];
-    user.foto = getBase64FromFile(user.foto);
-
-    res.json({
-      success: true,
-      data: user
-    });
-
-  } catch (error) {
-    console.error('Get user by id error:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Terjadi kesalahan server'
-    });
-  }
-};
-
-const createUser = async (req, res) => {
-  let connection;
-  try {
-    const {
-      nama,
-      username,
-      password,
-      no_hp,
-      jabatan,
-      roles,
-      wilayah_penugasan,
-      tempat_lahir,
-      tanggal_lahir,
-      alamat,
-      jenis_kelamin,
-      pendidikan_terakhir,
-      telegram_id,
-      // jam_kerja_id, // HAPUS BARIS INI - kolom tidak ada di tabel
-      can_remote,
-      status,
-      foto
-    } = req.body;
-
-    console.log(`📥 Request create user: ${nama}`);
-    console.log(`📸 Ada foto: ${!!foto}`);
-    console.log(`📍 Wilayah penugasan: ${wilayah_penugasan || 'Tidak diisi'}`);
-
-    // Validasi required fields
-    if (!nama || !username || !password || !jabatan || !roles || !status) {
-      return res.status(400).json({
-        success: false,
-        message: 'Nama, username, password, jabatan, roles, dan status wajib diisi'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Cek apakah username sudah ada
-    const [existingUsers] = await connection.execute(
-      'SELECT id FROM users WHERE username = ?',
-      [username]
-    );
-
-    if (existingUsers.length > 0) {
-      await connection.release();
-      return res.status(400).json({
-        success: false,
-        message: 'Username sudah digunakan'
-      });
-    }
-
-    // Handle upload foto
-    let fotoPath = "/uploads/users/default.png";
-    
-    // Jika ada foto yang diupload
-    if (foto && foto.startsWith("data:image")) {
-      try {
-        console.log('🔄 Memproses upload foto...');
-        
-        // Optimasi gambar terlebih dahulu
-        let optimizedFoto = foto;
-        try {
-          optimizedFoto = await optimizeImage(foto);
-        } catch (optimizeError) {
-          console.log('⚠️ Optimasi gambar gagal, menggunakan gambar asli:', optimizeError.message);
-        }
-        
-        // Simpan file
-        fotoPath = saveBase64Image(optimizedFoto, 'users');
-        console.log('✅ Foto berhasil diproses:', fotoPath);
-      } catch (error) {
-        console.error('❌ Error saving photo:', error.message);
-        // Tetap lanjut dengan foto default jika gagal
-        fotoPath = "/uploads/users/default.png";
+      let errorMessage = 'Terjadi kesalahan server';
+      if (error.message.includes('PayloadTooLargeError')) {
+        errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
+      } else if (error.message.includes('Ukuran foto terlalu besar')) {
+        errorMessage = error.message;
+      } else if (error.message) {
+        errorMessage = error.message;
       }
-    } else {
-      console.log('ℹ️ Tidak ada foto atau format tidak valid, menggunakan default');
+      
+      res.status(error.message.includes('wajib diisi') || error.message.includes('sudah digunakan') ? 400 : 500).json({
+        success: false,
+        message: errorMessage,
+        detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
+  },
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 10);
+  updateUser: async (req, res) => {
+    try {
+      const { id } = req.params;
+      console.log(`📥 Request update user ID: ${id}`);
+      console.log(`📸 Ada foto: ${!!req.body.foto}`);
+      console.log(`📍 Wilayah penugasan: ${req.body.wilayah_penugasan || 'Tidak diisi'}`);
 
-    // Insert user baru - HAPUS jam_kerja_id dari query
-    const [result] = await connection.execute(
-      `INSERT INTO users 
-       (nama, username, password, no_hp, jabatan, roles, wilayah_penugasan,
-        tempat_lahir, tanggal_lahir, alamat, jenis_kelamin, pendidikan_terakhir,
-        telegram_id, can_remote, status, foto) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        nama,
-        username,
-        hashedPassword,
-        no_hp || null,
-        jabatan,
-        roles,
-        wilayah_penugasan || null,
-        tempat_lahir || null,
-        tanggal_lahir || null,
-        alamat || null,
-        jenis_kelamin || null,
-        pendidikan_terakhir || null,
-        telegram_id || null,
-        can_remote !== undefined ? can_remote : 0,
-        status || 'Aktif',
-        fotoPath
-      ]
-    );
+      const result = await UserService.updateUser(id, req.body, req.user?.id || 1);
+      
+      console.log('✅ User berhasil diupdate:', id);
 
-    // Log activity
-    await connection.execute(
-      'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['CREATE_USER', `Admin membuat user baru: ${nama} (${username}) dengan wilayah ${wilayah_penugasan || 'tidak ada'}`, req.user?.id || 1]
-    );
-
-    await connection.release();
-
-    console.log('✅ User berhasil dibuat:', result.insertId);
-
-    res.json({
-      success: true,
-      message: 'User berhasil ditambahkan',
-      data: {
-        id: result.insertId
+      res.json({
+        success: true,
+        message: 'User berhasil diupdate',
+        data: result
+      });
+    } catch (error) {
+      console.error('❌ Update user error:', error);
+      
+      let errorMessage = 'Terjadi kesalahan server';
+      if (error.message.includes('PayloadTooLargeError')) {
+        errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
+      } else if (error.message.includes('Ukuran foto terlalu besar')) {
+        errorMessage = error.message;
+      } else if (error.message) {
+        errorMessage = error.message;
       }
-    });
-
-  } catch (error) {
-    console.error('❌ Create user error:', error);
-    if (connection) await connection.release();
-    
-    // Berikan error message yang lebih spesifik
-    let errorMessage = 'Terjadi kesalahan server';
-    if (error.message.includes('PayloadTooLargeError')) {
-      errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
-    } else if (error.message.includes('Ukuran foto terlalu besar')) {
-      errorMessage = error.message;
-    } else if (error.code === 'ER_BAD_FIELD_ERROR') {
-      errorMessage = 'Terjadi kesalahan struktur database. Silakan cek kembali field yang diisi.';
+      
+      res.status(error.message.includes('tidak ditemukan') ? 404 : 
+                error.message.includes('sudah digunakan') ? 400 : 500).json({
+        success: false,
+        message: errorMessage,
+        detail: process.env.NODE_ENV === 'development' ? error.message : undefined
+      });
     }
-    
-    res.status(500).json({
-      success: false,
-      message: errorMessage,
-      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
+  },
+
+  deleteUser: async (req, res) => {
+    try {
+      const { id } = req.params;
+      console.log(`🗑️ Request delete user ID: ${id}`);
+
+      await UserService.deleteUser(id, req.user?.id || 1);
+      
+      console.log('✅ User berhasil dihapus:', id);
+
+      res.json({
+        success: true,
+        message: 'User berhasil dihapus'
+      });
+    } catch (error) {
+      console.error('❌ Delete user error:', error);
+      res.status(error.message === 'User tidak ditemukan' ? 404 : 500).json({
+        success: false,
+        message: error.message || 'Terjadi kesalahan server'
+      });
+    }
+  },
+
+  updateUserPassword: async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { password } = req.body;
+      
+      console.log(`🔐 Request update password user ID: ${id}`);
+
+      await UserService.updateUserPassword(id, password, req.user?.id || 1);
+      
+      console.log('✅ Password berhasil diupdate untuk user:', id);
+
+      res.json({
+        success: true,
+        message: 'Password berhasil diupdate'
+      });
+    } catch (error) {
+      console.error('❌ Update password error:', error);
+      res.status(error.message === 'User tidak ditemukan' ? 404 : 
+                error.message === 'Password wajib diisi' ? 400 : 500).json({
+        success: false,
+        message: error.message || 'Terjadi kesalahan server'
+      });
+    }
   }
 };
 
-const updateUser = async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    const {
-      nama,
-      username,
-      no_hp,
-      jabatan,
-      roles,
-      status,
-      is_active,
-      wilayah_penugasan,
-      tempat_lahir,
-      tanggal_lahir,
-      alamat,
-      jenis_kelamin,
-      pendidikan_terakhir,
-      telegram_id,
-      // jam_kerja_id, // HAPUS BARIS INI - kolom tidak ada di tabel
-      can_remote,
-      foto
-    } = req.body;
-
-    console.log(`📥 Request update user ID: ${id}`);
-    console.log(`📸 Ada foto: ${!!foto}`);
-    console.log(`📍 Wilayah penugasan: ${wilayah_penugasan || 'Tidak diisi'}`);
-
-    connection = await pool.getConnection();
-
-    // Cek apakah user exists
-    const [existingUsers] = await connection.execute(
-      'SELECT id, foto, nama, wilayah_penugasan FROM users WHERE id = ?',
-      [id]
-    );
-
-    if (existingUsers.length === 0) {
-      await connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'User tidak ditemukan'
-      });
-    }
-
-    const currentUser = existingUsers[0];
-
-    // Cek apakah username sudah digunakan oleh user lain
-    const [usernameCheck] = await connection.execute(
-      'SELECT id FROM users WHERE username = ? AND id != ?',
-      [username, id]
-    );
-
-    if (usernameCheck.length > 0) {
-      await connection.release();
-      return res.status(400).json({
-        success: false,
-        message: 'Username sudah digunakan'
-      });
-    }
-
-    // Handle update foto jika ada
-    let fotoPath = currentUser.foto;
-    
-    if (foto && foto.startsWith("data:image")) {
-      try {
-        console.log('🔄 Memproses update foto...');
-        
-        // Optimasi gambar terlebih dahulu
-        let optimizedFoto = foto;
-        try {
-          optimizedFoto = await optimizeImage(foto);
-        } catch (optimizeError) {
-          console.log('⚠️ Optimasi gambar gagal, menggunakan gambar asli:', optimizeError.message);
-        }
-        
-        // Hapus foto lama jika bukan default
-        if (fotoPath && !fotoPath.includes('default.png')) {
-          deleteFile(fotoPath);
-        }
-        
-        // Simpan foto baru
-        fotoPath = saveBase64Image(optimizedFoto, 'users');
-        console.log('✅ Foto berhasil diupdate:', fotoPath);
-      } catch (error) {
-        console.error("⚠️ Gagal memproses foto upload:", error.message);
-        // Tetap gunakan fotoPath yang lama jika gagal
-      }
-    }
-
-    // Update user - HAPUS jam_kerja_id dari query
-    await connection.execute(
-      `UPDATE users SET 
-        nama = ?, 
-        username = ?, 
-        no_hp = ?, 
-        jabatan = ?, 
-        roles = ?,
-        status = ?, 
-        is_active = ?, 
-        wilayah_penugasan = ?,
-        tempat_lahir = ?,
-        tanggal_lahir = ?, 
-        alamat = ?, 
-        jenis_kelamin = ?, 
-        pendidikan_terakhir = ?,
-        telegram_id = ?, 
-        can_remote = ?, 
-        foto = ?, 
-        updated_at = NOW()
-       WHERE id = ?`,
-      [
-        nama,
-        username,
-        no_hp || null,
-        jabatan,
-        roles,
-        status || 'Aktif',
-        is_active !== undefined ? is_active : 1,
-        wilayah_penugasan || null,
-        tempat_lahir || null,
-        tanggal_lahir || null,
-        alamat || null,
-        jenis_kelamin || null,
-        pendidikan_terakhir || null,
-        telegram_id || null,
-        can_remote !== undefined ? can_remote : 0,
-        fotoPath,
-        id
-      ]
-    );
-
-    // Log activity dengan mencatat perubahan wilayah penugasan
-    const wilayahChanged = currentUser.wilayah_penugasan !== wilayah_penugasan;
-    const logMessage = `Admin mengupdate user: ${nama} (ID: ${id})` + 
-                      (wilayahChanged ? `, wilayah penugasan: ${currentUser.wilayah_penugasan || 'kosong'} → ${wilayah_penugasan || 'kosong'}` : '');
-    
-    await connection.execute(
-      'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['UPDATE_USER', logMessage, req.user?.id || 1]
-    );
-
-    await connection.release();
-
-    console.log('✅ User berhasil diupdate:', id);
-
-    res.json({
-      success: true,
-      message: 'User berhasil diupdate',
-      data: {
-        id: parseInt(id),
-        wilayah_penugasan: wilayah_penugasan || null
-      }
-    });
-
-  } catch (error) {
-    console.error('❌ Update user error:', error);
-    if (connection) await connection.release();
-    
-    let errorMessage = 'Terjadi kesalahan server';
-    if (error.message.includes('PayloadTooLargeError')) {
-      errorMessage = 'Ukuran foto terlalu besar. Silakan gunakan foto yang lebih kecil atau kompres terlebih dahulu.';
-    } else if (error.message.includes('Ukuran foto terlalu besar')) {
-      errorMessage = error.message;
-    } else if (error.code === 'ER_BAD_FIELD_ERROR') {
-      errorMessage = 'Terjadi kesalahan struktur database. Silakan cek kembali field yang diisi.';
-    }
-    
-    res.status(500).json({
-      success: false,
-      message: errorMessage,
-      detail: process.env.NODE_ENV === 'development' ? error.message : undefined
-    });
-  }
-};
-
-const deleteUser = async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-
-    console.log(`🗑️ Request delete user ID: ${id}`);
-
-    connection = await pool.getConnection();
-
-    // Cek apakah user exists
-    const [existingUsers] = await connection.execute(
-      'SELECT nama, username, foto FROM users WHERE id = ?',
-      [id]
-    );
-
-    if (existingUsers.length === 0) {
-      await connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'User tidak ditemukan'
-      });
-    }
-
-    const user = existingUsers[0];
-
-    // Hapus foto jika ada
-    deleteFile(user.foto);
-
-    // Hapus user
-    await connection.execute('DELETE FROM users WHERE id = ?', [id]);
-
-    // Log activity
-    await connection.execute(
-      'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['DELETE_USER', `Admin menghapus user: ${user.nama} (${user.username})`, req.user?.id || 1]
-    );
-
-    await connection.release();
-
-    console.log('✅ User berhasil dihapus:', id);
-
-    res.json({
-      success: true,
-      message: 'User berhasil dihapus'
-    });
-
-  } catch (error) {
-    console.error('❌ Delete user error:', error);
-    if (connection) await connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Terjadi kesalahan server'
-    });
-  }
-};
-
-const updateUserPassword = async (req, res) => {
-  let connection;
-  try {
-    const { id } = req.params;
-    const { password } = req.body;
-
-    console.log(`🔐 Request update password user ID: ${id}`);
-
-    if (!password) {
-      return res.status(400).json({
-        success: false,
-        message: 'Password wajib diisi'
-      });
-    }
-
-    connection = await pool.getConnection();
-
-    // Cek apakah user exists
-    const [existingUsers] = await connection.execute(
-      'SELECT id FROM users WHERE id = ?',
-      [id]
-    );
-
-    if (existingUsers.length === 0) {
-      await connection.release();
-      return res.status(404).json({
-        success: false,
-        message: 'User tidak ditemukan'
-      });
-    }
-
-    // Hash password baru
-    const hashedPassword = await bcrypt.hash(password, 10);
-
-    // Update password
-    await connection.execute(
-      'UPDATE users SET password = ?, updated_at = NOW() WHERE id = ?',
-      [hashedPassword, id]
-    );
-
-    // Log activity
-    await connection.execute(
-      'INSERT INTO system_log (event_type, description, user_id) VALUES (?, ?, ?)',
-      ['UPDATE_PASSWORD', `Admin mengupdate password user ID: ${id}`, req.user?.id || 1]
-    );
-
-    await connection.release();
-
-    console.log('✅ Password berhasil diupdate untuk user:', id);
-
-    res.json({
-      success: true,
-      message: 'Password berhasil diupdate'
-    });
-
-  } catch (error) {
-    console.error('❌ Update password error:', error);
-    if (connection) await connection.release();
-    res.status(500).json({
-      success: false,
-      message: 'Terjadi kesalahan server'
-    });
-  }
-};
-
-module.exports = {
-  getAllUsers,
-  getUserById,
-  createUser,
-  updateUser,
-  deleteUser,
-  updateUserPassword
-};
+module.exports = UserController;
