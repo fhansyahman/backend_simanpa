@@ -4,8 +4,8 @@ require('dotenv').config();
 const dbConfig = {
   host: process.env.DB_HOST || 'localhost',
   user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || 'admin',
-  database: process.env.DB_NAME || 'elnas',
+  password: process.env.DB_PASSWORD || 'Adm@in123',
+  database: process.env.DB_NAME || 'simanpa_database',
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0
