@@ -27,7 +27,8 @@ const {
   // System functions
   getSystemStatus,
    getDashboardKehadiran,
-  getDaftarBelumAbsen
+  getDaftarBelumAbsen,
+  getUserPenugasanAktif  
 } = require('../controllers/presensiController');
 const { authenticate, authorize } = require('../middleware/auth');
 const router = express.Router();
@@ -42,7 +43,7 @@ router.post('/pulang', authenticate, presensiPulang);
 router.get('/hari-ini', authenticate, getPresensiHariIni);
 router.get('/user', authenticate, getPresensiUser);
 router.get('/perbulan', authenticate, getPresensiUserPerBulan);
-
+router.get('/penugasan-aktif', authenticate, getUserPenugasanAktif);  // <-- TAMBAHKAN INI
 // ==================== ROUTES UNTUK ADMIN & ATASAN ====================
 
 // GET data presensi admin

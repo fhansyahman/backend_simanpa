@@ -30,4 +30,5 @@ router.get('/:id', authenticate, authorize('admin','atasan'), getIzinById);
 router.patch('/:id/status', authenticate, authorize('admin','atasan'), updateIzinStatus);
 router.post('/admin-create', authenticate, authorize('admin','atasan'), createIzinByAdmin);
 router.get('/download/:filename', authenticate, authorize('admin','atasan'), downloadDokumen); // TAMBAHKAN INI
+router.delete('/admin-delete/:id', authenticate, authorize('admin','atasan'), deleteIzin); // TAMBAHKAN INI
 module.exports = router;

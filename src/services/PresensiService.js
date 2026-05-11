@@ -1,8 +1,8 @@
 const path = require('path');
 const fs = require('fs');
 const { DateTime } = require('luxon');
-const PresensiModel = require('../models/PresensiModel');
-
+const PresensiModel = require('../models/presensiModel');
+const { pool } = require('../config/database');  // <-- INI YANG DITAMBAH
 // Import dari jamKerjaController (SAMA PERSIS DENGAN KODE ASLI)
 const { getUserPenugasan } = require('../controllers/jamKerjaController');
 
@@ -281,96 +281,65 @@ const updatePresensiStatusAkhirHari = async () => {
         success: true,
         message: `Bukan hari kerja: ${hariKerjaInfo.keterangan}`,
         updated_count: 0,
-        izin_count: 0,
-        tanpa_keterangan_count: 0,
         tanggal: today
       };
     }
 
     console.log(`✅ Hari kerja: ${hariKerjaInfo.keterangan}`);
 
-    const presensiList = await PresensiModel.getPresensiWithoutCheckin(today);
+    // Ambil semua presensi yang sudah masuk TAPI BELUM PULANG
+    // DAN status_masuk-nya bukan Tanpa Keterangan (belum di-update)
+    const [presensiList] = await pool.execute(
+      `SELECT p.id, p.user_id, p.jam_masuk, p.keterangan, u.nama
+       FROM presensi p
+       JOIN users u ON p.user_id = u.id
+       WHERE p.tanggal = ? 
+         AND u.is_active = 1
+         AND p.jam_masuk IS NOT NULL
+         AND p.jam_pulang IS NULL
+         AND p.izin_id IS NULL
+         AND (p.status_masuk != 'Tanpa Keterangan' OR p.status_masuk IS NULL)`,
+      [today]
+    );
 
-    console.log(`📊 Found ${presensiList.length} presensi records without check-in`);
+    console.log(`📊 Found ${presensiList.length} presensi records with check-in but no check-out`);
 
     let updatedCount = 0;
-    let izinCount = 0;
-    let tanpaKeteranganCount = 0;
-
-    console.log('\n' + '─'.repeat(60));
-    console.log('🔄 PROCESSING RECORDS:');
-    console.log('─'.repeat(60));
 
     for (const presensi of presensiList) {
       try {
-        console.log(`\n👤 ${presensi.nama}:`);
+        console.log(`\n👤 ${presensi.nama}: Tidak pulang sampai akhir hari`);
         
-        const izin = await checkUserIzin(presensi.user_id, today);
-        const penugasan = await getUserPenugasan(presensi.user_id, today);
-
-        if (penugasan) {
-          await PresensiModel.updatePresensiPenugasan(penugasan.id, penugasan.is_penugasan_khusus, presensi.id);
-        }
-
-        if (presensi.izin_id) {
-          const izinDetail = await PresensiModel.getIzinDetail(presensi.izin_id);
-          
-          if (izinDetail.length > 0 && izinDetail[0].status === 'Disetujui') {
-            const newKeterangan = presensi.keterangan 
-              ? `${presensi.keterangan} | End-of-day: Izin ${izinDetail[0].jenis}`
-              : `End-of-day: Izin ${izinDetail[0].jenis}`;
-              
-            await PresensiModel.updatePresensiWithIzinEndOfDay(
-              presensi.izin_id, `Izin ${izinDetail[0].jenis}`.substring(0, 20), newKeterangan, presensi.id
-            );
-            updatedCount++;
-            izinCount++;
-            console.log(`  ✅ Updated: Izin ${izinDetail[0].jenis}`);
-          }
-        } 
-        else if (izin) {
-          const newKeterangan = presensi.keterangan 
-            ? `${presensi.keterangan} | End-of-day: Izin ${izin.jenis}`
-            : `End-of-day: Izin ${izin.jenis}`;
-            
-          await PresensiModel.updatePresensiWithIzinEndOfDay(
-            izin.id, `Izin ${izin.jenis}`.substring(0, 20), newKeterangan, presensi.id
-          );
-          updatedCount++;
-          izinCount++;
-          console.log(`  ✅ Updated with izin: ${izin.jenis}`);
-        }
-        else if (!presensi.jam_masuk) {
-          const newKeterangan = presensi.keterangan 
-            ? `${presensi.keterangan} | End-of-day: Tanpa Keterangan`
-            : 'End-of-day: Tanpa Keterangan';
-            
-          await PresensiModel.updatePresensiEndOfDay('Tanpa Keterangan', newKeterangan, presensi.id);
-          updatedCount++;
-          tanpaKeteranganCount++;
-          console.log(`  ❌ Updated: Tanpa Keterangan`);
-        }
+        await pool.execute(
+          `UPDATE presensi SET 
+            status_masuk = 'Tanpa Keterangan',
+            status_pulang = 'Tanpa Keterangan',
+            keterangan = CONCAT(COALESCE(keterangan, ''), ' | TIDAK HADIR - Tidak melakukan presensi pulang sampai akhir hari'),
+            updated_at = NOW()
+           WHERE id = ?`,
+          [presensi.id]
+        );
+        
+        updatedCount++;
+        console.log(`  ❌ Updated: TIDAK HADIR (tidak pulang)`);
+        
       } catch (error) {
         console.error(`  ❌ Error updating presensi ${presensi.id}:`, error.message);
       }
     }
 
-    await PresensiModel.insertSystemLog('UPDATE_PRESENSI_END_DAY', `Updated ${updatedCount} presensi untuk ${today} (${izinCount} izin, ${tanpaKeteranganCount} tanpa keterangan)`, null);
+    await PresensiModel.insertSystemLog('UPDATE_PRESENSI_END_DAY', 
+      `Updated ${updatedCount} presensi (tidak pulang sampai akhir hari) untuk ${today}`, 
+      null);
 
     console.log('\n' + '='.repeat(60));
     console.log('🌙 END OF DAY UPDATE COMPLETED');
-    console.log('='.repeat(60));
-    console.log(`📈 SUMMARY:`);
-    console.log(`  🔄 Updated records: ${updatedCount}`);
-    console.log(`  📋 With izin: ${izinCount}`);
-    console.log(`  ❌ Tanpa Keterangan: ${tanpaKeteranganCount}`);
+    console.log(`📈 Updated (tidak pulang): ${updatedCount}`);
     console.log('='.repeat(60));
     
     return {
       success: true,
       updated_count: updatedCount,
-      izin_count: izinCount,
-      tanpa_keterangan_count: tanpaKeteranganCount,
       tanggal: today
     };
   } catch (error) {
@@ -998,6 +967,7 @@ const presensiPulang = async (req, res) => {
       });
     }
 
+    // Validasi radius untuk pulang
     if (penugasan.is_penugasan_khusus && penugasan.latitude && penugasan.longitude) {
       if (latitude_pulang !== undefined && longitude_pulang !== undefined) {
         const distance = calculateDistance(
@@ -1019,11 +989,41 @@ const presensiPulang = async (req, res) => {
     }
 
     const jamPulangStandar = penugasan.jam_pulang;
+    const batasAkhirPulang = penugasan.batas_akhir_pulang || jamPulangStandar;
+    
     const [pulangHour, pulangMinute] = jamPulangStandar.split(':').map(Number);
+    const [batasHour, batasMinute] = batasAkhirPulang.split(':').map(Number);
     
     const jamPulangStandarToday = now.set({ hour: pulangHour, minute: pulangMinute, second: 0 });
+    const batasAkhirToday = now.set({ hour: batasHour, minute: batasMinute, second: 0 });
     const batasAwalPulang = jamPulangStandarToday.minus({ hours: 1 });
 
+    // ============ CEK APAKAH MELEWATI BATAS AKHIR PULANG ============
+    if (now > batasAkhirToday) {
+      console.log(`❌ User ${userId} melewati batas akhir pulang: ${now.toFormat('HH:mm:ss')} > ${batasAkhirToday.toFormat('HH:mm:ss')}`);
+      
+      // Update status menjadi TANPA KETERANGAN (TIDAK HADIR)
+      await pool.execute(
+        `UPDATE presensi SET 
+          status_masuk = 'Tanpa Keterangan',
+          status_pulang = 'Tanpa Keterangan',
+          keterangan = CONCAT(COALESCE(keterangan, ''), ' | TIDAK HADIR - Melewati batas akhir pulang pukul ', ?),
+          updated_at = NOW()
+         WHERE id = ?`,
+        [batasAkhirToday.toFormat('HH:mm'), presensi[0].id]
+      );
+
+      await PresensiModel.insertSystemLog('PRESENSI_PULANG_DITOLAK', 
+        `User ${userId} ditolak presensi pulang - melewati batas akhir ${batasAkhirToday.toFormat('HH:mm')} - status menjadi Tanpa Keterangan`, 
+        userId);
+
+      return res.status(400).json({
+        success: false,
+        message: `❌ PRESENSI PULANG DITOLAK! Batas akhir pulang adalah pukul ${batasAkhirToday.toFormat('HH:mm')}. Anda melewati batas tersebut dan dianggap TIDAK HADIR hari ini.`
+      });
+    }
+
+    // ============ CEK APAKAH TERLALU AWAL ============
     if (now < batasAwalPulang) {
       return res.status(400).json({
         success: false,
@@ -1031,13 +1031,14 @@ const presensiPulang = async (req, res) => {
       });
     }
 
+    // ============ TENTUKAN STATUS PULANG ============
     let statusPulang = 'Tepat Waktu';
     let isLembur = 0;
     let jamLembur = null;
 
     if (now < jamPulangStandarToday) {
       statusPulang = 'Cepat Pulang';
-    } else if (now > jamPulangStandarToday) {
+    } else if (now >= jamPulangStandarToday && now <= batasAkhirToday) {
       statusPulang = 'Lembur';
       isLembur = 1;
       
@@ -1049,6 +1050,7 @@ const presensiPulang = async (req, res) => {
       console.log('⏰ Lembur detected:', jamLembur);
     }
 
+    // ============ SIMPAN FOTO ============
     const fotoFileName = `pulang_${userId}_${today}_${Date.now()}.jpg`;
     const filePath = path.join(__dirname, '../uploads/presensi', fotoFileName);
     
@@ -1100,6 +1102,7 @@ const presensiPulang = async (req, res) => {
     });
   }
 };
+
 
 // ============ GET PRESENSI HARI INI ============
 

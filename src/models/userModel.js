@@ -296,7 +296,7 @@ const UserModel = {
 
   // Get default foto path
   getDefaultFotoPath: () => {
-    return "/uploads/users/default.png";
+    return "/uploads/users/3135715.png";
   }
 };
 

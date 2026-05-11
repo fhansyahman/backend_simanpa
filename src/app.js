@@ -526,22 +526,22 @@ const setupDirectCronJobs = () => {
     });
     
     // 4. CRON UNTUK HARI BESOK (SETIAP JAM 23:30 WIB)
-    cron.schedule('30 23 * * *', async () => {
-      try {
-        console.log('\n' + '='.repeat(60));
-        console.log('⏰ [CRON 23:30] Generating presensi for TOMORROW...');
-        console.log(`🕐 Triggered at: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
+    // cron.schedule('30 23 * * *', async () => {
+    //   try {
+    //     console.log('\n' + '='.repeat(60));
+    //     console.log('⏰ [CRON 23:30] Generating presensi for TOMORROW...');
+    //     console.log(`🕐 Triggered at: ${new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })}`);
         
-        const tomorrow = DateTime.now().setZone('Asia/Jakarta').plus({ days: 1 }).toISODate();
-        console.log(`📅 Tomorrow's date (Asia/Jakarta): ${tomorrow}`);
+    //     const tomorrow = DateTime.now().setZone('Asia/Jakarta').plus({ days: 1 }).toISODate();
+    //     console.log(`📅 Tomorrow's date (Asia/Jakarta): ${tomorrow}`);
         
-        const result = await generatePresensiForTargetDate(tomorrow);
-        console.log(`✅ [CRON 23:30] Result: ${JSON.stringify(result)}`);
+    //     const result = await generatePresensiForTargetDate(tomorrow);
+    //     console.log(`✅ [CRON 23:30] Result: ${JSON.stringify(result)}`);
         
-      } catch (error) {
-        console.error('❌ [CRON 23:30] Error:', error.message);
-      }
-    });
+    //   } catch (error) {
+    //     console.error('❌ [CRON 23:30] Error:', error.message);
+    //   }
+    // });
     
     // 5. CRON UNTUK UPDATE AKHIR HARI (SETIAP JAM 23:59 WIB)
     cron.schedule('59 23 * * *', async () => {
@@ -659,7 +659,7 @@ const setupDirectCronJobs = () => {
     console.log('   • 00:01 - Generate presensi hari ini');
     console.log('   • 08:00 - Backup check today\'s presensi');
     console.log('   • 12:00 - Midday check today\'s presensi');
-    console.log('   • 23:30 - Generate presensi besok');
+    // console.log('   • 23:30 - Generate presensi besok');
     console.log('   • 23:59 - Update end of day status');
     if (process.env.NODE_ENV === 'development') {
       console.log('   • */30 * - Test cron (development only)');
@@ -715,19 +715,19 @@ const initializePresensiSystem = async () => {
     }
     
     // 4. GENERATE PRESENSI BESOK (jika belum ada)
-    const tomorrow = DateTime.now().setZone('Asia/Jakarta').plus({ days: 1 }).toISODate();
-    const [tomorrowCount] = await pool.execute(
-      'SELECT COUNT(*) as total FROM presensi WHERE tanggal = ?',
-      [tomorrow]
-    );
+    // const tomorrow = DateTime.now().setZone('Asia/Jakarta').plus({ days: 1 }).toISODate();
+    // const [tomorrowCount] = await pool.execute(
+    //   'SELECT COUNT(*) as total FROM presensi WHERE tanggal = ?',
+    //   [tomorrow]
+    // );
     
-    if (tomorrowCount[0].total === 0) {
-      console.log(`\n📅 Generating presensi for tomorrow (${tomorrow})...`);
-      const tomorrowResult = await generatePresensiForTargetDate(tomorrow);
-      console.log(`✅ Tomorrow result: ${JSON.stringify(tomorrowResult)}`);
-    } else {
-      console.log(`\n📅 Tomorrow's presensi already exists: ${tomorrowCount[0].total} records`);
-    }
+    // if (tomorrowCount[0].total === 0) {
+    //   console.log(`\n📅 Generating presensi for tomorrow (${tomorrow})...`);
+    //   const tomorrowResult = await generatePresensiForTargetDate(tomorrow);
+    //   console.log(`✅ Tomorrow result: ${JSON.stringify(tomorrowResult)}`);
+    // } else {
+    //   console.log(`\n📅 Tomorrow's presensi already exists: ${tomorrowCount[0].total} records`);
+    // }
     
     // 5. LOG STARTUP
     await pool.execute(

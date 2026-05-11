@@ -1,5 +1,7 @@
 const { UserModel, UserLogModel } = require('../models/userModel');
 
+const DEFAULT_AVATAR = "https://cdn-icons-png.flaticon.com/512/3135/3135715.png";
+
 const UserService = {
   getAllUsers: async () => {
     return await UserModel.getAll();
@@ -30,7 +32,8 @@ const UserService = {
     // Handle foto
     let fotoPath = UserModel.getDefaultFotoPath();
     
-    if (foto && foto.startsWith("data:image")) {
+    // PERBAIKAN: Jika foto ada dan bukan default, proses upload
+    if (foto && foto !== DEFAULT_AVATAR && foto.startsWith("data:image")) {
       try {
         console.log('🔄 Memproses upload foto...');
         let optimizedFoto = foto;
@@ -45,6 +48,8 @@ const UserService = {
         console.error('❌ Error saving photo:', error.message);
         fotoPath = UserModel.getDefaultFotoPath();
       }
+    } else {
+      console.log('ℹ️ Menggunakan foto default');
     }
 
     // Create user
@@ -78,7 +83,8 @@ const UserService = {
     // Handle foto
     let fotoPath = currentUser.foto;
     
-    if (foto && foto.startsWith("data:image")) {
+    // PERBAIKAN: Jika ada foto baru dan bukan default
+    if (foto && foto !== DEFAULT_AVATAR && foto.startsWith("data:image")) {
       try {
         console.log('🔄 Memproses update foto...');
         let optimizedFoto = foto;

@@ -45,6 +45,7 @@ const PenugasanService = {
       tanggal_selesai,
       jam_masuk,
       jam_pulang,
+      batas_akhir_pulang,        // <-- TAMBAHKAN INI
       batas_terlambat,
       toleransi_keterlambatan,
       radius = 100,
@@ -91,7 +92,8 @@ const PenugasanService = {
     const penugasanId = await PenugasanModel.createPenugasan(
       {
         kodePenugasan, nama_penugasan, tipe_penugasan,
-        jam_masuk, jam_pulang, toleransi_keterlambatan, batas_terlambat,
+        jam_masuk, jam_pulang, batas_akhir_pulang,  // <-- TAMBAHKAN INI
+        toleransi_keterlambatan, batas_terlambat,
         maps_link, alamat, radius, tanggal_mulai, tanggal_selesai
       },
       coordinates,
@@ -142,6 +144,7 @@ const PenugasanService = {
       tanggal_selesai,
       jam_masuk,
       jam_pulang,
+      batas_akhir_pulang,        // <-- TAMBAHKAN INI
       batas_terlambat,
       toleransi_keterlambatan,
       radius = 100,
@@ -170,7 +173,8 @@ const PenugasanService = {
 
     await PenugasanModel.updatePenugasan(id, {
       nama_penugasan, maps_link, alamat, tanggal_mulai, tanggal_selesai,
-      jam_masuk, jam_pulang, batas_terlambat, toleransi_keterlambatan,
+      jam_masuk, jam_pulang, batas_akhir_pulang,  // <-- TAMBAHKAN INI
+      batas_terlambat, toleransi_keterlambatan,
       radius, is_active
     }, coordinates);
 
@@ -215,12 +219,22 @@ const PenugasanService = {
       throw new Error('Penugasan default tidak ditemukan');
     }
 
-    const { is_active } = data;
+    const { is_active, jam_masuk, jam_pulang, batas_akhir_pulang, toleransi_keterlambatan, batas_terlambat, nama_penugasan } = data;
+    
     if (is_active) {
       await PenugasanModel.nonaktifkanDefaultLainnya(id);
     }
 
-    await PenugasanModel.updateDefaultPenugasan(id, data);
+    await PenugasanModel.updateDefaultPenugasan(id, {
+      nama_penugasan,
+      jam_masuk,
+      jam_pulang,
+      batas_akhir_pulang,  // <-- TAMBAHKAN INI
+      toleransi_keterlambatan,
+      batas_terlambat,
+      is_active
+    });
+    
     return { message: 'Penugasan default berhasil diupdate' };
   },
 
@@ -327,14 +341,14 @@ const PenugasanService = {
     const penugasanKhusus = await PenugasanModel.getPenugasanKhususAktifForUser(userId, targetDate);
     
     if (penugasanKhusus) {
-      console.log(`✅ User ${userId} menggunakan penugasan KHUSUS: ${penugasanKhusus.nama_penugasan} (radius: ${penugasanKhusus.radius}m)`);
+      console.log(`✅ User ${userId} menggunakan penugasan KHUSUS: ${penugasanKhusus.nama_penugasan} (radius: ${penugasanKhusus.radius}m, batas akhir pulang: ${penugasanKhusus.batas_akhir_pulang})`);
       return penugasanKhusus;
     }
     
     const defaultSystem = await PenugasanModel.getPenugasanDefaultAktifSistem();
     
     if (defaultSystem) {
-      console.log(`✅ User ${userId} menggunakan penugasan DEFAULT (tanpa radius)`);
+      console.log(`✅ User ${userId} menggunakan penugasan DEFAULT (batas akhir pulang: ${defaultSystem.batas_akhir_pulang})`);
       return defaultSystem;
     }
     

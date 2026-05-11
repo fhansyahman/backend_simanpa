@@ -12,6 +12,7 @@ const PenugasanModel = {
         tipe_penugasan,
         jam_masuk,
         jam_pulang,
+        batas_akhir_pulang,
         toleransi_keterlambatan,
         batas_terlambat,
         maps_link,
@@ -54,6 +55,7 @@ const PenugasanModel = {
         nama_penugasan, 
         jam_masuk, 
         jam_pulang,
+        batas_akhir_pulang,
         toleransi_keterlambatan, 
         batas_terlambat
       FROM penugasan 
@@ -85,20 +87,23 @@ const PenugasanModel = {
   createPenugasan: async (data, coordinates, isPenugasanActive, createdBy) => {
     const {
       kodePenugasan, nama_penugasan, tipe_penugasan,
-      jam_masuk, jam_pulang, toleransi_keterlambatan, batas_terlambat,
+      jam_masuk, jam_pulang, batas_akhir_pulang,
+      toleransi_keterlambatan, batas_terlambat,
       maps_link, alamat, radius, tanggal_mulai, tanggal_selesai
     } = data;
 
     const [result] = await pool.execute(
       `INSERT INTO penugasan 
        (kode_penugasan, nama_penugasan, tipe_penugasan,
-        jam_masuk, jam_pulang, toleransi_keterlambatan, batas_terlambat,
+        jam_masuk, jam_pulang, batas_akhir_pulang,
+        toleransi_keterlambatan, batas_terlambat,
         maps_link, alamat, latitude, longitude, radius,
         tanggal_mulai, tanggal_selesai, status, is_active, created_by) 
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aktif', ?, ?)`,
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'aktif', ?, ?)`,
       [
         kodePenugasan, nama_penugasan, tipe_penugasan,
-        jam_masuk, jam_pulang, toleransi_keterlambatan || '00:15:00',
+        jam_masuk, jam_pulang, batas_akhir_pulang || null,
+        toleransi_keterlambatan || '00:15:00',
         batas_terlambat || jam_masuk,
         maps_link || null, alamat || null,
         coordinates?.latitude || null, coordinates?.longitude || null,
@@ -114,7 +119,8 @@ const PenugasanModel = {
   updatePenugasan: async (id, data, coordinates) => {
     const {
       nama_penugasan, maps_link, alamat, tanggal_mulai, tanggal_selesai,
-      jam_masuk, jam_pulang, batas_terlambat, toleransi_keterlambatan,
+      jam_masuk, jam_pulang, batas_akhir_pulang,
+      batas_terlambat, toleransi_keterlambatan,
       radius, is_active
     } = data;
 
@@ -130,6 +136,7 @@ const PenugasanModel = {
         tanggal_selesai = ?,
         jam_masuk = ?,
         jam_pulang = ?,
+        batas_akhir_pulang = ?,
         batas_terlambat = ?,
         toleransi_keterlambatan = ?,
         is_active = ?,
@@ -146,6 +153,7 @@ const PenugasanModel = {
         tanggal_selesai,
         jam_masuk,
         jam_pulang,
+        batas_akhir_pulang || null,
         batas_terlambat || jam_masuk,
         toleransi_keterlambatan || '00:15:00',
         is_active ? 1 : 0,
@@ -155,7 +163,7 @@ const PenugasanModel = {
     return result;
   },
 
-  // ============ UPDATE STATUS PENUGASAN ============
+  // ============ UPDATE PENUGASAN STATUS ============
   updatePenugasanStatus: async (id, status) => {
     const [result] = await pool.execute(
       'UPDATE penugasan SET status = ?, updated_at = NOW() WHERE id = ?',
@@ -167,7 +175,7 @@ const PenugasanModel = {
   // ============ UPDATE DEFAULT PENUGASAN ============
   updateDefaultPenugasan: async (id, data) => {
     const {
-      nama_penugasan, jam_masuk, jam_pulang,
+      nama_penugasan, jam_masuk, jam_pulang, batas_akhir_pulang,
       toleransi_keterlambatan, batas_terlambat, is_active
     } = data;
 
@@ -176,12 +184,13 @@ const PenugasanModel = {
         nama_penugasan = ?,
         jam_masuk = ?,
         jam_pulang = ?,
+        batas_akhir_pulang = ?,
         toleransi_keterlambatan = ?,
         batas_terlambat = ?,
         is_active = ?,
         updated_at = NOW()
       WHERE id = ?`,
-      [nama_penugasan, jam_masuk, jam_pulang, 
+      [nama_penugasan, jam_masuk, jam_pulang, batas_akhir_pulang, 
        toleransi_keterlambatan, batas_terlambat, is_active ? 1 : 0, id]
     );
     return result;

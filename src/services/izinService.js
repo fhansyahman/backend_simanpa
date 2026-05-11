@@ -2,7 +2,7 @@ const { pool } = require('../config/database');
 const { DateTime } = require('luxon');
 const path = require('path');
 const fs = require('fs');
-const IzinModel = require('../models/IzinModel');
+const IzinModel = require('../models/izinModel');
 
 const IzinService = {
   // Get all izin

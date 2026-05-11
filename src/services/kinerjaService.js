@@ -705,211 +705,213 @@ const KinerjaService = {
   },
 
   // GET ALL KINERJA PER BULAN (ADMIN)
-  getAllKinerjaPerBulan: async (userRoles, bulan, tahun, wilayah, search) => {
-    if (userRoles !== 'admin' && userRoles !== 'atasan') {
-      throw new Error('Akses ditolak. Hanya admin dan atasan yang dapat mengakses.');
+ getAllKinerjaPerBulan: async (userRoles, bulan, tahun, wilayah, search) => {
+  if (userRoles !== 'admin' && userRoles !== 'atasan') {
+    throw new Error('Akses ditolak. Hanya admin dan atasan yang dapat mengakses.');
+  }
+
+  if (!bulan || !tahun) {
+    throw new Error('Parameter bulan dan tahun wajib diisi');
+  }
+
+  const targetBulan = parseInt(bulan);
+  const targetTahun = parseInt(tahun);
+
+  if (targetBulan < 1 || targetBulan > 12) {
+    throw new Error('Bulan harus antara 1 dan 12');
+  }
+
+  if (targetTahun < 2000 || targetTahun > 2100) {
+    throw new Error('Tahun tidak valid');
+  }
+
+  console.log(`📊 Getting all kinerja for admin - Bulan: ${targetBulan}, Tahun: ${targetTahun}`);
+  console.log(`Filters - Wilayah: ${wilayah || 'semua'}, Search: ${search || 'tidak ada'}`);
+
+  const startDate = `${targetTahun}-${targetBulan.toString().padStart(2, '0')}-01`;
+  const endDate = DateTime.fromObject({ 
+    year: targetTahun, 
+    month: targetBulan 
+  }).endOf('month').toISODate();
+
+  const { query, params } = KinerjaModel.getAllKinerjaPerBulanQuery(startDate, endDate, wilayah, search);
+  console.log('📝 SQL Query:', query);
+  console.log('📝 Parameters:', params);
+
+  const [kinerja] = await pool.execute(query, params);
+  console.log(`✅ Found ${kinerja.length} kinerja records for period ${startDate} to ${endDate}`);
+
+  const parsedKinerja = kinerja.map((item) => ({
+    ...item,
+    sket_image: getBase64FromFile(item.sket_image),
+    foto_0: getBase64FromFile(item.foto_0),
+    foto_50: getBase64FromFile(item.foto_50),
+    foto_100: getBase64FromFile(item.foto_100),
+    panjang_kr_formatted: item.panjang_kr ? `${item.panjang_kr} meter` : '0 meter',
+    panjang_kn_formatted: item.panjang_kn ? `${item.panjang_kn} meter` : '0 meter',
+    total_panjang: (parseFloat(item.panjang_kr) || 0) + (parseFloat(item.panjang_kn) || 0)
+  }));
+
+  let totalHariKerja = 0;
+  const startDateObj = DateTime.fromISO(startDate);
+  const endDateObj = DateTime.fromISO(endDate);
+  let currentDateLoop = startDateObj;
+  
+  while (currentDateLoop <= endDateObj) {
+    const dayOfWeek = currentDateLoop.weekday;
+    if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+      totalHariKerja++;
     }
+    currentDateLoop = currentDateLoop.plus({ days: 1 });
+  }
 
-    if (!bulan || !tahun) {
-      throw new Error('Parameter bulan dan tahun wajib diisi');
+  // PERUBAHAN: Target bulanan tunggal
+  const targetHarian = 50;
+  const targetBulanan = targetHarian * totalHariKerja;
+
+  const { query: pegawaiQuery, params: pegawaiParams } = KinerjaModel.getAllActivePegawaiQuery(wilayah, search);
+  const [pegawaiList] = await pool.execute(pegawaiQuery, pegawaiParams);
+  
+  const kinerjaPerPegawai = {};
+  
+  pegawaiList.forEach(pegawai => {
+    kinerjaPerPegawai[pegawai.id] = {
+      id: pegawai.id,
+      nama: pegawai.nama,
+      jabatan: pegawai.jabatan,
+      wilayah: pegawai.wilayah_penugasan,
+      total_hari_lapor: 0,
+      total_kr: 0,
+      total_kn: 0,
+      total_panjang: 0,
+      rata_harian_kr: 0,
+      rata_harian_kn: 0,
+      persen_kehadiran: 0,
+      target_bulanan: targetBulanan,
+      laporan_harian: [],
+      status: 'belum_lapor'
+    };
+  });
+  
+  parsedKinerja.forEach(item => {
+    if (kinerjaPerPegawai[item.user_id]) {
+      const pegawai = kinerjaPerPegawai[item.user_id];
+      pegawai.total_hari_lapor++;
+      pegawai.total_kr += parseFloat(item.panjang_kr) || 0;
+      pegawai.total_kn += parseFloat(item.panjang_kn) || 0;
+      pegawai.total_panjang += (parseFloat(item.panjang_kr) || 0) + (parseFloat(item.panjang_kn) || 0);
+      pegawai.laporan_harian.push({
+        tanggal: item.tanggal,
+        tanggal_formatted: item.tanggal_formatted,
+        hari: item.hari,
+        ruas_jalan: item.ruas_jalan,
+        kegiatan: item.kegiatan,
+        panjang_kr: item.panjang_kr,
+        panjang_kn: item.panjang_kn,
+        total_panjang: (parseFloat(item.panjang_kr) || 0) + (parseFloat(item.panjang_kn) || 0)
+      });
     }
-
-    const targetBulan = parseInt(bulan);
-    const targetTahun = parseInt(tahun);
-
-    if (targetBulan < 1 || targetBulan > 12) {
-      throw new Error('Bulan harus antara 1 dan 12');
-    }
-
-    if (targetTahun < 2000 || targetTahun > 2100) {
-      throw new Error('Tahun tidak valid');
-    }
-
-    console.log(`📊 Getting all kinerja for admin - Bulan: ${targetBulan}, Tahun: ${targetTahun}`);
-    console.log(`Filters - Wilayah: ${wilayah || 'semua'}, Search: ${search || 'tidak ada'}`);
-
-    const startDate = `${targetTahun}-${targetBulan.toString().padStart(2, '0')}-01`;
-    const endDate = DateTime.fromObject({ 
-      year: targetTahun, 
-      month: targetBulan 
-    }).endOf('month').toISODate();
-
-    const { query, params } = KinerjaModel.getAllKinerjaPerBulanQuery(startDate, endDate, wilayah, search);
-    console.log('📝 SQL Query:', query);
-    console.log('📝 Parameters:', params);
-
-    const [kinerja] = await pool.execute(query, params);
-    console.log(`✅ Found ${kinerja.length} kinerja records for period ${startDate} to ${endDate}`);
-
-    const parsedKinerja = kinerja.map((item) => ({
-      ...item,
-      sket_image: getBase64FromFile(item.sket_image),
-      foto_0: getBase64FromFile(item.foto_0),
-      foto_50: getBase64FromFile(item.foto_50),
-      foto_100: getBase64FromFile(item.foto_100),
-      panjang_kr_formatted: item.panjang_kr ? `${item.panjang_kr} meter` : '0 meter',
-      panjang_kn_formatted: item.panjang_kn ? `${item.panjang_kn} meter` : '0 meter',
-      total_panjang: (parseFloat(item.panjang_kr) || 0) + (parseFloat(item.panjang_kn) || 0)
-    }));
-
-    let totalHariKerja = 0;
-    const startDateObj = DateTime.fromISO(startDate);
-    const endDateObj = DateTime.fromISO(endDate);
-    let currentDateLoop = startDateObj;
-    
-    while (currentDateLoop <= endDateObj) {
-      const dayOfWeek = currentDateLoop.weekday;
-      if (dayOfWeek >= 1 && dayOfWeek <= 5) {
-        totalHariKerja++;
-      }
-      currentDateLoop = currentDateLoop.plus({ days: 1 });
-    }
-
-    const { query: pegawaiQuery, params: pegawaiParams } = KinerjaModel.getAllActivePegawaiQuery(wilayah, search);
-    const [pegawaiList] = await pool.execute(pegawaiQuery, pegawaiParams);
-    
-    const kinerjaPerPegawai = {};
-    
-    pegawaiList.forEach(pegawai => {
-      kinerjaPerPegawai[pegawai.id] = {
-        id: pegawai.id,
-        nama: pegawai.nama,
-        jabatan: pegawai.jabatan,
-        wilayah: pegawai.wilayah_penugasan,
-        total_hari_lapor: 0,
-        total_kr: 0,
-        total_kn: 0,
-        rata_harian_kr: 0,
-        rata_harian_kn: 0,
-        persen_kehadiran: 0,
-        target_kr_bulanan: totalHariKerja * 50,
-        target_kn_bulanan: totalHariKerja * 50,
-        laporan_harian: [],
-        status: 'belum_lapor'
-      };
-    });
-    
-    parsedKinerja.forEach(item => {
-      if (kinerjaPerPegawai[item.user_id]) {
-        const pegawai = kinerjaPerPegawai[item.user_id];
-        pegawai.total_hari_lapor++;
-        pegawai.total_kr += parseFloat(item.panjang_kr) || 0;
-        pegawai.total_kn += parseFloat(item.panjang_kn) || 0;
-        pegawai.laporan_harian.push({
-          tanggal: item.tanggal,
-          tanggal_formatted: item.tanggal_formatted,
-          hari: item.hari,
-          ruas_jalan: item.ruas_jalan,
-          kegiatan: item.kegiatan,
-          panjang_kr: item.panjang_kr,
-          panjang_kn: item.panjang_kn,
-          total_panjang: item.total_panjang
-        });
-      }
-    });
-    
-    let totalSudahLapor = 0;
-    let totalKR = 0;
-    let totalKN = 0;
-    let totalPencapaianKR = 0;
-    let totalPencapaianKN = 0;
-    
-    Object.values(kinerjaPerPegawai).forEach(pegawai => {
-      if (pegawai.total_hari_lapor > 0) {
-        totalSudahLapor++;
-        pegawai.rata_harian_kr = pegawai.total_kr / pegawai.total_hari_lapor;
-        pegawai.rata_harian_kn = pegawai.total_kn / pegawai.total_hari_lapor;
-        pegawai.persen_kehadiran = (pegawai.total_hari_lapor / totalHariKerja) * 100;
-        
-        const pencapaianKR = (pegawai.total_kr / pegawai.target_kr_bulanan) * 100;
-        const pencapaianKN = (pegawai.total_kn / pegawai.target_kn_bulanan) * 100;
-        
-        pegawai.pencapaian_kr = parseFloat(pencapaianKR.toFixed(1));
-        pegawai.pencapaian_kn = parseFloat(pencapaianKN.toFixed(1));
-        
-        if (pegawai.pencapaian_kr >= 100 && pegawai.pencapaian_kn >= 100) {
-          pegawai.status = 'tercapai_target';
-        } else if (pegawai.pencapaian_kr >= 80 && pegawai.pencapaian_kn >= 80) {
-          pegawai.status = 'hampir_tercapai';
-        } else if (pegawai.pencapaian_kr >= 60 && pegawai.pencapaian_kn >= 60) {
-          pegawai.status = 'sedang';
-        } else {
-          pegawai.status = 'tidak_tercapai';
-        }
-        
-        totalKR += pegawai.total_kr;
-        totalKN += pegawai.total_kn;
-        totalPencapaianKR += pegawai.pencapaian_kr;
-        totalPencapaianKN += pegawai.pencapaian_kn;
+  });
+  
+  let totalSudahLapor = 0;
+  let totalKR = 0;
+  let totalKN = 0;
+  let totalPanjang = 0;
+  let totalPencapaian = 0;
+  
+  Object.values(kinerjaPerPegawai).forEach(pegawai => {
+    if (pegawai.total_hari_lapor > 0) {
+      totalSudahLapor++;
+      pegawai.rata_harian_kr = pegawai.total_kr / pegawai.total_hari_lapor;
+      pegawai.rata_harian_kn = pegawai.total_kn / pegawai.total_hari_lapor;
+      pegawai.persen_kehadiran = (pegawai.total_hari_lapor / totalHariKerja) * 100;
+      
+      // PERUBAHAN: Pencapaian berdasarkan total panjang
+      const pencapaian = (pegawai.total_panjang / pegawai.target_bulanan) * 100;
+      pegawai.pencapaian = parseFloat(pencapaian.toFixed(1));
+      pegawai.pencapaian_kr = pegawai.pencapaian;
+      pegawai.pencapaian_kn = pegawai.pencapaian;
+      
+      if (pegawai.pencapaian >= 100) {
+        pegawai.status = 'tercapai_target';
+      } else if (pegawai.pencapaian >= 80) {
+        pegawai.status = 'hampir_tercapai';
+      } else if (pegawai.pencapaian >= 60) {
+        pegawai.status = 'sedang';
       } else {
-        pegawai.pencapaian_kr = 0;
-        pegawai.pencapaian_kn = 0;
-        pegawai.persen_kehadiran = 0;
-        pegawai.status = 'tidak_ada_laporan';
+        pegawai.status = 'tidak_tercapai';
       }
-    });
-    
-    const totalPegawai = pegawaiList.length;
-    const rataKR = totalSudahLapor > 0 ? totalKR / totalSudahLapor : 0;
-    const rataKN = totalSudahLapor > 0 ? totalKN / totalSudahLapor : 0;
-    const rataPencapaianKR = totalSudahLapor > 0 ? totalPencapaianKR / totalSudahLapor : 0;
-    const rataPencapaianKN = totalSudahLapor > 0 ? totalPencapaianKN / totalSudahLapor : 0;
-    
-    const statusCounts = {
-      tercapai_target: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tercapai_target').length,
-      hampir_tercapai: Object.values(kinerjaPerPegawai).filter(p => p.status === 'hampir_tercapai').length,
-      sedang: Object.values(kinerjaPerPegawai).filter(p => p.status === 'sedang').length,
-      tidak_tercapai: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tidak_tercapai').length,
-      tidak_ada_laporan: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tidak_ada_laporan').length
-    };
-    
-    const chartData = {
-      labels: Object.values(kinerjaPerPegawai).map(p => p.nama),
-      datasets: [
-        {
-          label: 'Pencapaian KR (%)',
-          data: Object.values(kinerjaPerPegawai).map(p => p.pencapaian_kr || 0),
-          backgroundColor: 'rgba(34, 197, 94, 0.8)',
-          borderColor: 'rgb(34, 197, 94)',
-          borderWidth: 1
-        },
-        {
-          label: 'Pencapaian KN (%)',
-          data: Object.values(kinerjaPerPegawai).map(p => p.pencapaian_kn || 0),
-          backgroundColor: 'rgba(59, 130, 246, 0.8)',
-          borderColor: 'rgb(59, 130, 246)',
-          borderWidth: 1
-        }
-      ]
-    };
-    
-    return {
-      periode: {
-        bulan: targetBulan,
-        tahun: targetTahun,
-        nama_bulan: DateTime.fromObject({ month: targetBulan }).setLocale('id').toFormat('MMMM'),
-        start_date: startDate,
-        end_date: endDate,
-        total_hari_kerja: totalHariKerja
-      },
-      statistik: {
-        total_pegawai: totalPegawai,
-        total_sudah_lapor: totalSudahLapor,
-        total_belum_lapor: totalPegawai - totalSudahLapor,
-        total_kr: parseFloat(totalKR.toFixed(2)),
-        total_kn: parseFloat(totalKN.toFixed(2)),
-        rata_kr: parseFloat(rataKR.toFixed(2)),
-        rata_kn: parseFloat(rataKN.toFixed(2)),
-        rata_pencapaian_kr: parseFloat(rataPencapaianKR.toFixed(1)),
-        rata_pencapaian_kn: parseFloat(rataPencapaianKN.toFixed(1)),
-        persen_sudah_lapor: totalPegawai > 0 ? parseFloat(((totalSudahLapor / totalPegawai) * 100).toFixed(1)) : 0,
-        status_counts: statusCounts
-      },
-      charts: chartData,
-      pegawai_kinerja: Object.values(kinerjaPerPegawai),
-      all_kinerja: parsedKinerja
-    };
-  },
+      
+      totalKR += pegawai.total_kr;
+      totalKN += pegawai.total_kn;
+      totalPanjang += pegawai.total_panjang;
+      totalPencapaian += pegawai.pencapaian;
+    } else {
+      pegawai.pencapaian = 0;
+      pegawai.pencapaian_kr = 0;
+      pegawai.pencapaian_kn = 0;
+      pegawai.persen_kehadiran = 0;
+      pegawai.status = 'tidak_ada_laporan';
+    }
+  });
+  
+  const totalPegawai = pegawaiList.length;
+  const rataKR = totalSudahLapor > 0 ? totalKR / totalSudahLapor : 0;
+  const rataKN = totalSudahLapor > 0 ? totalKN / totalSudahLapor : 0;
+  const rataPanjang = totalSudahLapor > 0 ? totalPanjang / totalSudahLapor : 0;
+  const rataPencapaian = totalSudahLapor > 0 ? totalPencapaian / totalSudahLapor : 0;
+  
+  const statusCounts = {
+    tercapai_target: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tercapai_target').length,
+    hampir_tercapai: Object.values(kinerjaPerPegawai).filter(p => p.status === 'hampir_tercapai').length,
+    sedang: Object.values(kinerjaPerPegawai).filter(p => p.status === 'sedang').length,
+    tidak_tercapai: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tidak_tercapai').length,
+    tidak_ada_laporan: Object.values(kinerjaPerPegawai).filter(p => p.status === 'tidak_ada_laporan').length
+  };
+  
+  const chartData = {
+    labels: Object.values(kinerjaPerPegawai).map(p => p.nama),
+    datasets: [
+      {
+        label: 'Pencapaian Total (%)',
+        data: Object.values(kinerjaPerPegawai).map(p => p.pencapaian || 0),
+        backgroundColor: 'rgba(34, 197, 94, 0.8)',
+        borderColor: 'rgb(34, 197, 94)',
+        borderWidth: 1
+      }
+    ]
+  };
+  
+  return {
+    periode: {
+      bulan: targetBulan,
+      tahun: targetTahun,
+      nama_bulan: DateTime.fromObject({ month: targetBulan }).setLocale('id').toFormat('MMMM'),
+      start_date: startDate,
+      end_date: endDate,
+      total_hari_kerja: totalHariKerja,
+      target_bulanan: targetBulanan
+    },
+    statistik: {
+      total_pegawai: totalPegawai,
+      total_sudah_lapor: totalSudahLapor,
+      total_belum_lapor: totalPegawai - totalSudahLapor,
+      total_kr: parseFloat(totalKR.toFixed(2)),
+      total_kn: parseFloat(totalKN.toFixed(2)),
+      total_panjang: parseFloat(totalPanjang.toFixed(2)),
+      rata_kr: parseFloat(rataKR.toFixed(2)),
+      rata_kn: parseFloat(rataKN.toFixed(2)),
+      rata_panjang: parseFloat(rataPanjang.toFixed(2)),
+      rata_pencapaian: parseFloat(rataPencapaian.toFixed(1)),
+      persen_sudah_lapor: totalPegawai > 0 ? parseFloat(((totalSudahLapor / totalPegawai) * 100).toFixed(1)) : 0,
+      target_bulanan: targetBulanan,
+      status_counts: statusCounts
+    },
+    charts: chartData,
+    pegawai_kinerja: Object.values(kinerjaPerPegawai),
+    all_kinerja: parsedKinerja
+  };
+},
 
   // GET REKAP LAPORAN KERJA BULANAN
   getRekapLaporanKerjaBulanan: async (userRoles, bulan, tahun) => {
@@ -1215,469 +1217,472 @@ const KinerjaService = {
 
   // GET PEGAWAI DASHBOARD KINERJA
   getPegawaiDashboardKinerja: async (userId, bulan, tahun) => {
-    const now = new Date();
-    const targetBulan = bulan ? parseInt(bulan) : now.getMonth() + 1;
-    const targetTahun = tahun ? parseInt(tahun) : now.getFullYear();
-    
-    if (targetBulan < 1 || targetBulan > 12) {
-      throw new Error('Bulan harus antara 1 dan 12');
-    }
-    
-    console.log(`📊 Generating pegawai dashboard for user ${userId} - ${targetBulan}/${targetTahun}`);
-    
-    const { query: pegawaiQuery, params: pegawaiParams } = KinerjaModel.getPegawaiDataQuery(userId);
-    const [pegawai] = await pool.execute(pegawaiQuery, pegawaiParams);
-    
-    if (pegawai.length === 0) {
-      throw new Error('Data pegawai tidak ditemukan');
-    }
-    
-    const dataPegawai = pegawai[0];
-    
-    const startDateStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-01`;
-    const lastDay = new Date(targetTahun, targetBulan, 0).getDate();
-    const endDateStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
-    
-    console.log(`Date range: ${startDateStr} to ${endDateStr}`);
-    
-    const { query: laporanQuery, params: laporanParams } = KinerjaModel.getLaporanListForDashboardQuery(userId, startDateStr, endDateStr);
-    const [laporanList] = await pool.execute(laporanQuery, laporanParams);
-    
-    console.log(`Laporan found: ${laporanList.length}`);
-    console.log('Laporan dates:', laporanList.map(l => l.tanggal));
-    
-    const { query: presensiQuery, params: presensiParams } = KinerjaModel.getPresensiListForDashboardQuery(userId, startDateStr, endDateStr);
-    const [presensiList] = await pool.execute(presensiQuery, presensiParams);
-    
-    console.log(`Presensi found: ${presensiList.length}`);
-    console.log('Presensi dates:', presensiList.map(p => p.tanggal));
-    
-    const laporanMap = new Map();
-    laporanList.forEach(l => {
-      laporanMap.set(l.tanggal, l);
-    });
-    
-    const presensiMap = new Map();
-    presensiList.forEach(p => {
-      presensiMap.set(p.tanggal, p);
-    });
-    
-    console.log('Presensi map has 2026-04-23:', presensiMap.has('2026-04-23'));
-    if (presensiMap.has('2026-04-23')) {
-      console.log('Presensi 2026-04-23:', presensiMap.get('2026-04-23'));
-    }
-    console.log('Laporan map has 2026-04-23:', laporanMap.has('2026-04-23'));
-    
-    const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
-    const monthNamesLong = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
-    const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
-    
-    let totalHariKerja = 0;
-    let hariKerjaBerlalu = 0;
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    
-    const daftarTanggalKerja = [];
-    
-    for (let i = 1; i <= lastDay; i++) {
-      const currentDate = new Date(targetTahun, targetBulan - 1, i);
-      const dayOfWeek = currentDate.getDay();
-      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-      
-      if (!isWeekend) {
-        totalHariKerja++;
-        const tanggalStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-        daftarTanggalKerja.push({
-          tanggal: tanggalStr,
-          tglObj: currentDate,
-          hariKe: totalHariKerja,
-          dayName: dayNames[dayOfWeek]
-        });
-        
-        if (currentDate <= today) {
-          hariKerjaBerlalu++;
-        }
-      }
-    }
-    
-    console.log(`Total hari kerja: ${totalHariKerja}, Berlalu: ${hariKerjaBerlalu}`);
-    
-    let totalHadir = 0;
-    let totalHadirTepatWaktu = 0;
-    let totalTerlambat = 0;
-    let totalIzin = 0;
-    let totalSakit = 0;
-    let totalCuti = 0;
-    let totalHadirDariLaporan = 0;
-    let totalTanpaKeterangan = 0;
-    
-    for (const tgl of daftarTanggalKerja) {
-      const presensi = presensiMap.get(tgl.tanggal);
-      const laporan = laporanMap.get(tgl.tanggal);
-      
-      if (presensi) {
-        if (presensi.jam_masuk) {
-          totalHadir++;
-          if (presensi.status_masuk === 'Tepat Waktu') {
-            totalHadirTepatWaktu++;
-          } else if (presensi.status_masuk === 'Terlambat') {
-            totalTerlambat++;
-          }
-        } else if (presensi.izin_id) {
-          const ket = (presensi.keterangan || '').toLowerCase();
-          if (ket.includes('sakit')) {
-            totalSakit++;
-          } else if (ket.includes('cuti')) {
-            totalCuti++;
-          } else {
-            totalIzin++;
-          }
-        }
-      } else if (laporan) {
-        totalHadir++;
-        totalHadirDariLaporan++;
-      } else if (tgl.tglObj <= today) {
-        totalTanpaKeterangan++;
-      }
-    }
-    
-    const totalKehadiran = totalHadir + totalIzin + totalSakit + totalCuti;
-    const persenKehadiran = totalHariKerja > 0 ? (totalKehadiran / totalHariKerja) * 100 : 0;
-    
-    console.log(`Statistik kehadiran - Hadir: ${totalHadir}, Terlambat: ${totalTerlambat}, Izin: ${totalIzin}, Sakit: ${totalSakit}, Cuti: ${totalCuti}, Tanpa Keterangan: ${totalTanpaKeterangan}`);
-    
-    let statusKehadiran = "Perlu Perhatian";
-    let warnaKehadiran = "red";
-    if (persenKehadiran >= 90) {
-      statusKehadiran = "Sangat Baik";
-      warnaKehadiran = "green";
-    } else if (persenKehadiran >= 75) {
-      statusKehadiran = "Baik";
-      warnaKehadiran = "blue";
-    } else if (persenKehadiran >= 60) {
-      statusKehadiran = "Cukup";
-      warnaKehadiran = "yellow";
-    }
-    
-    const grafikKehadiran = [
-      { name: "Hadir", value: totalHadir, color: "#10B981" },
-      { name: "Terlambat", value: totalTerlambat, color: "#F59E0B" },
-      { name: "Izin", value: totalIzin, color: "#3B82F6" },
-      { name: "Sakit", value: totalSakit, color: "#8B5CF6" },
-      { name: "Cuti", value: totalCuti, color: "#EC4899" },
-      { name: "Tanpa Keterangan", value: totalTanpaKeterangan, color: "#EF4444" }
-    ].filter(item => item.value > 0);
-    
-    const totalLaporan = laporanList.length;
-    const totalKR = laporanList.reduce((sum, l) => sum + (parseFloat(l.panjang_kr) || 0), 0);
-    const totalKN = laporanList.reduce((sum, l) => sum + (parseFloat(l.panjang_kn) || 0), 0);
-    const totalPanjang = totalKR + totalKN;
-    
-    const targetHarian = 50;
-    const targetKRBulanan = targetHarian * totalHariKerja;
-    const targetKNBulanan = targetHarian * totalHariKerja;
-    const targetTotalBulanan = targetKRBulanan + targetKNBulanan;
-    
-    const pencapaianKR = totalHariKerja > 0 ? (totalKR / targetKRBulanan) * 100 : 0;
-    const pencapaianKN = totalHariKerja > 0 ? (totalKN / targetKNBulanan) * 100 : 0;
-    const pencapaianTotal = totalHariKerja > 0 ? (totalPanjang / targetTotalBulanan) * 100 : 0;
-    
-    const rataHarianKR = totalLaporan > 0 ? totalKR / totalLaporan : 0;
-    const rataHarianKN = totalLaporan > 0 ? totalKN / totalLaporan : 0;
-    
-    let statusKinerja = "Perlu Ditingkatkan";
-    let warnaKinerja = "orange";
-    if (pencapaianTotal >= 100) {
-      statusKinerja = "Excellent! 🎉";
-      warnaKinerja = "green";
-    } else if (pencapaianTotal >= 80) {
-      statusKinerja = "Baik 👍";
-      warnaKinerja = "blue";
-    } else if (pencapaianTotal >= 60) {
-      statusKinerja = "Cukup 📊";
-      warnaKinerja = "yellow";
-    }
-    
-    const grafikPerformaHarian = [];
-    
-    for (const tgl of daftarTanggalKerja) {
-      const laporan = laporanMap.get(tgl.tanggal);
-      const presensi = presensiMap.get(tgl.tanggal);
-      
-      const kr = laporan ? parseFloat(laporan.panjang_kr) || 0 : 0;
-      const kn = laporan ? parseFloat(laporan.panjang_kn) || 0 : 0;
-      
-      let statusKehadiranHari = 'Tidak Hadir';
-      let statusWarna = 'red';
-      
-      if (presensi) {
-        if (presensi.jam_masuk) {
-          if (presensi.status_masuk === 'Terlambat') {
-            statusKehadiranHari = 'Terlambat';
-            statusWarna = 'yellow';
-          } else {
-            statusKehadiranHari = 'Hadir';
-            statusWarna = 'green';
-          }
-        } else if (presensi.izin_id) {
-          const ket = (presensi.keterangan || '').toLowerCase();
-          if (ket.includes('sakit')) {
-            statusKehadiranHari = 'Sakit';
-            statusWarna = 'purple';
-          } else if (ket.includes('cuti')) {
-            statusKehadiranHari = 'Cuti';
-            statusWarna = 'pink';
-          } else {
-            statusKehadiranHari = 'Izin';
-            statusWarna = 'blue';
-          }
-        }
-      } else if (laporan) {
-        statusKehadiranHari = 'Hadir (Tidak Absen)';
-        statusWarna = 'orange';
-      }
-      
-      const dayNum = parseInt(tgl.tanggal.split('-')[2]);
-      
-      grafikPerformaHarian.push({
-        hari_ke: tgl.hariKe,
-        tanggal: `${dayNum} ${monthNamesShort[targetBulan - 1]}`,
-        kr: kr,
-        kn: kn,
-        target: targetHarian,
-        is_lapor: !!laporan,
-        total: kr + kn,
-        status_kehadiran: statusKehadiranHari,
-        status_warna: statusWarna
-      });
-    }
-    
-    const detailKehadiranHarian = [];
-    
-    for (let i = 1; i <= lastDay; i++) {
-      const currentDate = new Date(targetTahun, targetBulan - 1, i);
-      const dayOfWeek = currentDate.getDay();
-      const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
-      const tanggalStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
-      
-      const presensi = presensiMap.get(tanggalStr);
-      const laporan = laporanMap.get(tanggalStr);
-      
-      let status = '';
-      let warna = '';
-      let keterangan = '';
-      
-      if (isWeekend) {
-        status = 'Libur';
-        warna = 'gray';
-        keterangan = 'Hari Libur Akhir Pekan';
-      } else if (presensi) {
-        if (presensi.jam_masuk) {
-          if (presensi.status_masuk === 'Tepat Waktu') {
-            status = 'Hadir Tepat Waktu';
-            warna = 'green';
-          } else if (presensi.status_masuk === 'Terlambat') {
-            status = 'Terlambat';
-            warna = 'yellow';
-            keterangan = `Jam datang: ${presensi.jam_masuk}`;
-          } else {
-            status = 'Hadir';
-            warna = 'green';
-          }
-        } else if (presensi.izin_id) {
-          const ket = (presensi.keterangan || '').toLowerCase();
-          if (ket.includes('sakit')) {
-            status = 'Sakit';
-            warna = 'purple';
-          } else if (ket.includes('cuti')) {
-            status = 'Cuti';
-            warna = 'pink';
-          } else {
-            status = 'Izin';
-            warna = 'blue';
-          }
-          keterangan = presensi.keterangan || '';
-        }
-      } else if (laporan) {
-        status = 'Hadir (Laporan Kinerja)';
-        warna = 'orange';
-        keterangan = 'Hadir berdasarkan laporan kinerja';
-      } else if (currentDate <= today) {
-        status = 'Tanpa Keterangan';
-        warna = 'red';
-        keterangan = 'Tidak ada catatan kehadiran';
-      } else {
-        status = 'Belum Terjadi';
-        warna = 'gray';
-        keterangan = 'Hari yang akan datang';
-      }
-      
-      detailKehadiranHarian.push({
-        tanggal: tanggalStr,
-        hari: dayNames[dayOfWeek],
-        tanggal_formatted: `${i} ${monthNamesLong[targetBulan - 1]} ${targetTahun}`,
-        status: status,
-        warna: warna,
-        keterangan: keterangan,
-        is_weekend: isWeekend,
-        is_future: currentDate > today
-      });
-    }
-    
-    const detailLaporanHarian = [...laporanList]
-      .sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal))
-      .slice(0, 5)
-      .map(laporan => {
-        const tglParts = laporan.tanggal.split('-');
-        const tglDate = new Date(parseInt(tglParts[0]), parseInt(tglParts[1]) - 1, parseInt(tglParts[2]));
-        const total = (parseFloat(laporan.panjang_kr) || 0) + (parseFloat(laporan.panjang_kn) || 0);
-        const pencapaianHarian = (targetHarian * 2) > 0 ? (total / (targetHarian * 2)) * 100 : 0;
-        
-        let statusHarian = "Tercapai";
-        if (pencapaianHarian >= 100) statusHarian = "Tercapai";
-        else if (pencapaianHarian >= 80) statusHarian = "Baik";
-        else if (pencapaianHarian >= 60) statusHarian = "Cukup";
-        else statusHarian = "Kurang";
-        
-        const presensiHari = presensiMap.get(laporan.tanggal);
-        let statusHadir = 'Tidak Terdata';
-        
-        if (presensiHari) {
-          if (presensiHari.jam_masuk) {
-            statusHadir = presensiHari.status_masuk === 'Terlambat' ? 'Terlambat' : 'Hadir';
-          } else if (presensiHari.izin_id) {
-            const ket = (presensiHari.keterangan || '').toLowerCase();
-            if (ket.includes('sakit')) statusHadir = 'Sakit';
-            else if (ket.includes('cuti')) statusHadir = 'Cuti';
-            else statusHadir = 'Izin';
-          }
-        } else {
-          statusHadir = 'Hadir (Tidak Absen)';
-        }
-        
-        return {
-          tanggal: laporan.tanggal,
-          hari: dayNames[tglDate.getDay()],
-          ruas_jalan: laporan.ruas_jalan || '-',
-          kegiatan: laporan.kegiatan || '-',
-          panjang_kr: parseFloat(laporan.panjang_kr) || 0,
-          panjang_kn: parseFloat(laporan.panjang_kn) || 0,
-          total: total,
-          status: statusHarian,
-          status_kehadiran: statusHadir
-        };
-      });
-    
-    const rekomendasi = [];
-    
-    if (pencapaianKR < 60) {
-      rekomendasi.push({
-        icon: "📈",
-        pesan: "Anda perlu meningkatkan volume pekerjaan KR",
-        target: 60,
-        current: Math.round(pencapaianKR)
-      });
-    }
-    
-    if (pencapaianTotal < 80) {
-      rekomendasi.push({
-        icon: "🎯",
-        pesan: `Target harian Anda adalah ${targetHarian}m KR + ${targetHarian}m KN`,
-        target: 100,
-        current: Math.round(pencapaianTotal)
-      });
-    }
-    
-    if (persenKehadiran < 80) {
-      rekomendasi.push({
-        icon: "📅",
-        pesan: "Tingkatkan konsistensi kehadiran Anda",
-        target: 80,
-        current: Math.round(persenKehadiran)
-      });
-    }
-    
-    if (totalTerlambat > 3) {
-      rekomendasi.push({
-        icon: "⏰",
-        pesan: "Usahakan datang tepat waktu untuk menghindari keterlambatan",
-        target: 0,
-        current: totalTerlambat
-      });
-    }
-    
-    if (rekomendasi.length === 0) {
-      rekomendasi.push({
-        icon: "🏆",
-        pesan: "Pertahankan prestasi Anda!",
-        target: 100,
-        current: Math.round(pencapaianTotal)
-      });
-    }
-    
-    return {
-      profil_pegawai: {
-        nama: dataPegawai.nama,
-        jabatan: dataPegawai.jabatan || "Pegawai",
-        wilayah: dataPegawai.wilayah_penugasan || "-"
-      },
-      periode_info: {
-        nama_bulan: monthNamesLong[targetBulan - 1],
-        tahun: targetTahun,
-        total_hari_kerja: totalHariKerja,
-        hari_kerja_berlalu: hariKerjaBerlalu
-      },
-      ringkasan_kinerja: {
-        total_hari_lapor: totalLaporan,
-        total_kr: Math.round(totalKR),
-        total_kn: Math.round(totalKN),
-        total_panjang: Math.round(totalPanjang),
-        target_kr_bulanan: targetKRBulanan,
-        target_kn_bulanan: targetKNBulanan,
-        pencapaian_kr: Math.round(pencapaianKR * 10) / 10,
-        pencapaian_kn: Math.round(pencapaianKN * 10) / 10,
-        pencapaian_total: Math.round(pencapaianTotal * 10) / 10,
-        rata_harian_kr: Math.round(rataHarianKR * 10) / 10,
-        rata_harian_kn: Math.round(rataHarianKN * 10) / 10,
-        status: statusKinerja,
-        warna_status: warnaKinerja
-      },
-      ringkasan_kehadiran: {
-        total_hadir: totalHadir,
-        total_hadir_tepat_waktu: totalHadirTepatWaktu,
-        total_terlambat: totalTerlambat,
-        total_izin: totalIzin,
-        total_sakit: totalSakit,
-        total_cuti: totalCuti,
-        total_tanpa_keterangan: totalTanpaKeterangan,
-        persen_kehadiran: Math.round(persenKehadiran),
-        status: statusKehadiran,
-        warna_status: warnaKehadiran
-      },
-      grafik_performa_harian: grafikPerformaHarian,
-      grafik_kehadiran: grafikKehadiran,
-      target_vs_realisasi: {
-        kr: { 
-          realisasi: Math.round(totalKR), 
-          target: targetKRBulanan, 
-          persen: Math.round(pencapaianKR) 
-        },
-        kn: { 
-          realisasi: Math.round(totalKN), 
-          target: targetKNBulanan, 
-          persen: Math.round(pencapaianKN) 
-        },
-        total: { 
-          realisasi: Math.round(totalPanjang), 
-          target: targetTotalBulanan, 
-          persen: Math.round(pencapaianTotal) 
-        }
-      },
-      detail_laporan_harian: detailLaporanHarian,
-      detail_kehadiran_harian: detailKehadiranHarian,
-      rekomendasi: rekomendasi
-    };
+  const now = new Date();
+  const targetBulan = bulan ? parseInt(bulan) : now.getMonth() + 1;
+  const targetTahun = tahun ? parseInt(tahun) : now.getFullYear();
+  
+  if (targetBulan < 1 || targetBulan > 12) {
+    throw new Error('Bulan harus antara 1 dan 12');
   }
+  
+  console.log(`📊 Generating pegawai dashboard for user ${userId} - ${targetBulan}/${targetTahun}`);
+  
+  const { query: pegawaiQuery, params: pegawaiParams } = KinerjaModel.getPegawaiDataQuery(userId);
+  const [pegawai] = await pool.execute(pegawaiQuery, pegawaiParams);
+  
+  if (pegawai.length === 0) {
+    throw new Error('Data pegawai tidak ditemukan');
+  }
+  
+  const dataPegawai = pegawai[0];
+  
+  const startDateStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-01`;
+  const lastDay = new Date(targetTahun, targetBulan, 0).getDate();
+  const endDateStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+  
+  console.log(`Date range: ${startDateStr} to ${endDateStr}`);
+  
+  const { query: laporanQuery, params: laporanParams } = KinerjaModel.getLaporanListForDashboardQuery(userId, startDateStr, endDateStr);
+  const [laporanList] = await pool.execute(laporanQuery, laporanParams);
+  
+  console.log(`Laporan found: ${laporanList.length}`);
+  console.log('Laporan dates:', laporanList.map(l => l.tanggal));
+  
+  const { query: presensiQuery, params: presensiParams } = KinerjaModel.getPresensiListForDashboardQuery(userId, startDateStr, endDateStr);
+  const [presensiList] = await pool.execute(presensiQuery, presensiParams);
+  
+  console.log(`Presensi found: ${presensiList.length}`);
+  console.log('Presensi dates:', presensiList.map(p => p.tanggal));
+  
+  const laporanMap = new Map();
+  laporanList.forEach(l => {
+    laporanMap.set(l.tanggal, l);
+  });
+  
+  const presensiMap = new Map();
+  presensiList.forEach(p => {
+    presensiMap.set(p.tanggal, p);
+  });
+  
+  console.log('Presensi map has 2026-04-23:', presensiMap.has('2026-04-23'));
+  if (presensiMap.has('2026-04-23')) {
+    console.log('Presensi 2026-04-23:', presensiMap.get('2026-04-23'));
+  }
+  console.log('Laporan map has 2026-04-23:', laporanMap.has('2026-04-23'));
+  
+  const dayNames = ['Minggu', 'Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu'];
+  const monthNamesLong = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+  const monthNamesShort = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+  
+  let totalHariKerja = 0;
+  let hariKerjaBerlalu = 0;
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  const daftarTanggalKerja = [];
+  
+  for (let i = 1; i <= lastDay; i++) {
+    const currentDate = new Date(targetTahun, targetBulan - 1, i);
+    const dayOfWeek = currentDate.getDay();
+    const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+    
+    if (!isWeekend) {
+      totalHariKerja++;
+      const tanggalStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+      daftarTanggalKerja.push({
+        tanggal: tanggalStr,
+        tglObj: currentDate,
+        hariKe: totalHariKerja,
+        dayName: dayNames[dayOfWeek]
+      });
+      
+      if (currentDate <= today) {
+        hariKerjaBerlalu++;
+      }
+    }
+  }
+  
+  console.log(`Total hari kerja: ${totalHariKerja}, Berlalu: ${hariKerjaBerlalu}`);
+  
+  let totalHadir = 0;
+  let totalHadirTepatWaktu = 0;
+  let totalTerlambat = 0;
+  let totalIzin = 0;
+  let totalSakit = 0;
+  let totalCuti = 0;
+  let totalHadirDariLaporan = 0;
+  let totalTanpaKeterangan = 0;
+  
+  for (const tgl of daftarTanggalKerja) {
+    const presensi = presensiMap.get(tgl.tanggal);
+    const laporan = laporanMap.get(tgl.tanggal);
+    
+    if (presensi) {
+      if (presensi.jam_masuk) {
+        totalHadir++;
+        if (presensi.status_masuk === 'Tepat Waktu') {
+          totalHadirTepatWaktu++;
+        } else if (presensi.status_masuk === 'Terlambat') {
+          totalTerlambat++;
+        }
+      } else if (presensi.izin_id) {
+        const ket = (presensi.keterangan || '').toLowerCase();
+        if (ket.includes('sakit')) {
+          totalSakit++;
+        } else if (ket.includes('cuti')) {
+          totalCuti++;
+        } else {
+          totalIzin++;
+        }
+      }
+    } else if (laporan) {
+      totalHadir++;
+      totalHadirDariLaporan++;
+    } else if (tgl.tglObj <= today) {
+      totalTanpaKeterangan++;
+    }
+  }
+  
+  const totalKehadiran = totalHadir + totalIzin + totalSakit + totalCuti;
+  const persenKehadiran = totalHariKerja > 0 ? (totalKehadiran / totalHariKerja) * 100 : 0;
+  
+  console.log(`Statistik kehadiran - Hadir: ${totalHadir}, Terlambat: ${totalTerlambat}, Izin: ${totalIzin}, Sakit: ${totalSakit}, Cuti: ${totalCuti}, Tanpa Keterangan: ${totalTanpaKeterangan}`);
+  
+  let statusKehadiran = "Perlu Perhatian";
+  let warnaKehadiran = "red";
+  if (persenKehadiran >= 90) {
+    statusKehadiran = "Sangat Baik";
+    warnaKehadiran = "green";
+  } else if (persenKehadiran >= 75) {
+    statusKehadiran = "Baik";
+    warnaKehadiran = "blue";
+  } else if (persenKehadiran >= 60) {
+    statusKehadiran = "Cukup";
+    warnaKehadiran = "yellow";
+  }
+  
+  const grafikKehadiran = [
+    { name: "Hadir", value: totalHadir, color: "#10B981" },
+    { name: "Terlambat", value: totalTerlambat, color: "#F59E0B" },
+    { name: "Izin", value: totalIzin, color: "#3B82F6" },
+    { name: "Sakit", value: totalSakit, color: "#8B5CF6" },
+    { name: "Cuti", value: totalCuti, color: "#EC4899" },
+    { name: "Tanpa Keterangan", value: totalTanpaKeterangan, color: "#EF4444" }
+  ].filter(item => item.value > 0);
+  
+  const totalLaporan = laporanList.length;
+  const totalKR = laporanList.reduce((sum, l) => sum + (parseFloat(l.panjang_kr) || 0), 0);
+  const totalKN = laporanList.reduce((sum, l) => sum + (parseFloat(l.panjang_kn) || 0), 0);
+  const totalPanjang = totalKR + totalKN;
+  
+  // PERUBAHAN: Target bulanan tunggal (50 x total_hari_kerja)
+  const targetHarian = 50;
+  const targetBulanan = targetHarian * totalHariKerja; // Target total gabungan KR+KN
+  
+  // Pencapaian total berdasarkan target bulanan
+  const pencapaianTotal = totalHariKerja > 0 ? (totalPanjang / targetBulanan) * 100 : 0;
+  
+  // Pencapaian KR dan KN juga menggunakan target yang sama (untuk konsistensi)
+  const pencapaianKR = totalHariKerja > 0 ? (totalKR / targetBulanan) * 100 : 0;
+  const pencapaianKN = totalHariKerja > 0 ? (totalKN / targetBulanan) * 100 : 0;
+  
+  const rataHarianKR = totalLaporan > 0 ? totalKR / totalLaporan : 0;
+  const rataHarianKN = totalLaporan > 0 ? totalKN / totalLaporan : 0;
+  
+  let statusKinerja = "Perlu Ditingkatkan";
+  let warnaKinerja = "orange";
+  if (pencapaianTotal >= 100) {
+    statusKinerja = "Excellent! 🎉";
+    warnaKinerja = "green";
+  } else if (pencapaianTotal >= 80) {
+    statusKinerja = "Baik 👍";
+    warnaKinerja = "blue";
+  } else if (pencapaianTotal >= 60) {
+    statusKinerja = "Cukup 📊";
+    warnaKinerja = "yellow";
+  }
+  
+  const grafikPerformaHarian = [];
+  
+  for (const tgl of daftarTanggalKerja) {
+    const laporan = laporanMap.get(tgl.tanggal);
+    const presensi = presensiMap.get(tgl.tanggal);
+    
+    const kr = laporan ? parseFloat(laporan.panjang_kr) || 0 : 0;
+    const kn = laporan ? parseFloat(laporan.panjang_kn) || 0 : 0;
+    
+    let statusKehadiranHari = 'Tidak Hadir';
+    let statusWarna = 'red';
+    
+    if (presensi) {
+      if (presensi.jam_masuk) {
+        if (presensi.status_masuk === 'Terlambat') {
+          statusKehadiranHari = 'Terlambat';
+          statusWarna = 'yellow';
+        } else {
+          statusKehadiranHari = 'Hadir';
+          statusWarna = 'green';
+        }
+      } else if (presensi.izin_id) {
+        const ket = (presensi.keterangan || '').toLowerCase();
+        if (ket.includes('sakit')) {
+          statusKehadiranHari = 'Sakit';
+          statusWarna = 'purple';
+        } else if (ket.includes('cuti')) {
+          statusKehadiranHari = 'Cuti';
+          statusWarna = 'pink';
+        } else {
+          statusKehadiranHari = 'Izin';
+          statusWarna = 'blue';
+        }
+      }
+    } else if (laporan) {
+      statusKehadiranHari = 'Hadir (Tidak Absen)';
+      statusWarna = 'orange';
+    }
+    
+    const dayNum = parseInt(tgl.tanggal.split('-')[2]);
+    
+    grafikPerformaHarian.push({
+      hari_ke: tgl.hariKe,
+      tanggal: `${dayNum} ${monthNamesShort[targetBulan - 1]}`,
+      kr: kr,
+      kn: kn,
+      target: targetHarian,
+      is_lapor: !!laporan,
+      total: kr + kn,
+      status_kehadiran: statusKehadiranHari,
+      status_warna: statusWarna
+    });
+  }
+  
+  const detailKehadiranHarian = [];
+  
+  for (let i = 1; i <= lastDay; i++) {
+    const currentDate = new Date(targetTahun, targetBulan - 1, i);
+    const dayOfWeek = currentDate.getDay();
+    const isWeekend = (dayOfWeek === 0 || dayOfWeek === 6);
+    const tanggalStr = `${targetTahun}-${String(targetBulan).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+    
+    const presensi = presensiMap.get(tanggalStr);
+    const laporan = laporanMap.get(tanggalStr);
+    
+    let status = '';
+    let warna = '';
+    let keterangan = '';
+    
+    if (isWeekend) {
+      status = 'Libur';
+      warna = 'gray';
+      keterangan = 'Hari Libur Akhir Pekan';
+    } else if (presensi) {
+      if (presensi.jam_masuk) {
+        if (presensi.status_masuk === 'Tepat Waktu') {
+          status = 'Hadir Tepat Waktu';
+          warna = 'green';
+        } else if (presensi.status_masuk === 'Terlambat') {
+          status = 'Terlambat';
+          warna = 'yellow';
+          keterangan = `Jam datang: ${presensi.jam_masuk}`;
+        } else {
+          status = 'Hadir';
+          warna = 'green';
+        }
+      } else if (presensi.izin_id) {
+        const ket = (presensi.keterangan || '').toLowerCase();
+        if (ket.includes('sakit')) {
+          status = 'Sakit';
+          warna = 'purple';
+        } else if (ket.includes('cuti')) {
+          status = 'Cuti';
+          warna = 'pink';
+        } else {
+          status = 'Izin';
+          warna = 'blue';
+        }
+        keterangan = presensi.keterangan || '';
+      }
+    } else if (laporan) {
+      status = 'Hadir (Laporan Kinerja)';
+      warna = 'orange';
+      keterangan = 'Hadir berdasarkan laporan kinerja';
+    } else if (currentDate <= today) {
+      status = 'Tanpa Keterangan';
+      warna = 'red';
+      keterangan = 'Tidak ada catatan kehadiran';
+    } else {
+      status = 'Belum Terjadi';
+      warna = 'gray';
+      keterangan = 'Hari yang akan datang';
+    }
+    
+    detailKehadiranHarian.push({
+      tanggal: tanggalStr,
+      hari: dayNames[dayOfWeek],
+      tanggal_formatted: `${i} ${monthNamesLong[targetBulan - 1]} ${targetTahun}`,
+      status: status,
+      warna: warna,
+      keterangan: keterangan,
+      is_weekend: isWeekend,
+      is_future: currentDate > today
+    });
+  }
+  
+  const detailLaporanHarian = [...laporanList]
+    .sort((a, b) => new Date(b.tanggal) - new Date(a.tanggal))
+    .slice(0, 5)
+    .map(laporan => {
+      const tglParts = laporan.tanggal.split('-');
+      const tglDate = new Date(parseInt(tglParts[0]), parseInt(tglParts[1]) - 1, parseInt(tglParts[2]));
+      const total = (parseFloat(laporan.panjang_kr) || 0) + (parseFloat(laporan.panjang_kn) || 0);
+      const pencapaianHarian = (targetHarian * 2) > 0 ? (total / (targetHarian * 2)) * 100 : 0;
+      
+      let statusHarian = "Tercapai";
+      if (pencapaianHarian >= 100) statusHarian = "Tercapai";
+      else if (pencapaianHarian >= 80) statusHarian = "Baik";
+      else if (pencapaianHarian >= 60) statusHarian = "Cukup";
+      else statusHarian = "Kurang";
+      
+      const presensiHari = presensiMap.get(laporan.tanggal);
+      let statusHadir = 'Tidak Terdata';
+      
+      if (presensiHari) {
+        if (presensiHari.jam_masuk) {
+          statusHadir = presensiHari.status_masuk === 'Terlambat' ? 'Terlambat' : 'Hadir';
+        } else if (presensiHari.izin_id) {
+          const ket = (presensiHari.keterangan || '').toLowerCase();
+          if (ket.includes('sakit')) statusHadir = 'Sakit';
+          else if (ket.includes('cuti')) statusHadir = 'Cuti';
+          else statusHadir = 'Izin';
+        }
+      } else {
+        statusHadir = 'Hadir (Tidak Absen)';
+      }
+      
+      return {
+        tanggal: laporan.tanggal,
+        hari: dayNames[tglDate.getDay()],
+        ruas_jalan: laporan.ruas_jalan || '-',
+        kegiatan: laporan.kegiatan || '-',
+        panjang_kr: parseFloat(laporan.panjang_kr) || 0,
+        panjang_kn: parseFloat(laporan.panjang_kn) || 0,
+        total: total,
+        status: statusHarian,
+        status_kehadiran: statusHadir
+      };
+    });
+  
+  const rekomendasi = [];
+  
+  if (pencapaianKR < 60) {
+    rekomendasi.push({
+      icon: "📈",
+      pesan: "Anda perlu meningkatkan volume pekerjaan KR",
+      target: 60,
+      current: Math.round(pencapaianKR)
+    });
+  }
+  
+  if (pencapaianTotal < 80) {
+    rekomendasi.push({
+      icon: "🎯",
+      pesan: `Target harian Anda adalah ${targetHarian}m (total KR+KN)`,
+      target: 100,
+      current: Math.round(pencapaianTotal)
+    });
+  }
+  
+  if (persenKehadiran < 80) {
+    rekomendasi.push({
+      icon: "📅",
+      pesan: "Tingkatkan konsistensi kehadiran Anda",
+      target: 80,
+      current: Math.round(persenKehadiran)
+    });
+  }
+  
+  if (totalTerlambat > 3) {
+    rekomendasi.push({
+      icon: "⏰",
+      pesan: "Usahakan datang tepat waktu untuk menghindari keterlambatan",
+      target: 0,
+      current: totalTerlambat
+    });
+  }
+  
+  if (rekomendasi.length === 0) {
+    rekomendasi.push({
+      icon: "🏆",
+      pesan: "Pertahankan prestasi Anda!",
+      target: 100,
+      current: Math.round(pencapaianTotal)
+    });
+  }
+  
+  return {
+    profil_pegawai: {
+      nama: dataPegawai.nama,
+      jabatan: dataPegawai.jabatan || "Pegawai",
+      wilayah: dataPegawai.wilayah_penugasan || "-"
+    },
+    periode_info: {
+      nama_bulan: monthNamesLong[targetBulan - 1],
+      tahun: targetTahun,
+      total_hari_kerja: totalHariKerja,
+      hari_kerja_berlalu: hariKerjaBerlalu
+    },
+    // PERUBAHAN: ringkasan_kinerja dengan target_bulanan tunggal
+    ringkasan_kinerja: {
+      total_hari_lapor: totalLaporan,
+      total_kr: Math.round(totalKR),
+      total_kn: Math.round(totalKN),
+      total_panjang: Math.round(totalPanjang),
+      target_bulanan: targetBulanan, // Target bulanan gabungan KR+KN
+      pencapaian_kr: Math.round(pencapaianKR * 10) / 10,
+      pencapaian_kn: Math.round(pencapaianKN * 10) / 10,
+      pencapaian_total: Math.round(pencapaianTotal * 10) / 10,
+      rata_harian_kr: Math.round(rataHarianKR * 10) / 10,
+      rata_harian_kn: Math.round(rataHarianKN * 10) / 10,
+      status: statusKinerja,
+      warna_status: warnaKinerja
+    },
+    ringkasan_kehadiran: {
+      total_hadir: totalHadir,
+      total_hadir_tepat_waktu: totalHadirTepatWaktu,
+      total_terlambat: totalTerlambat,
+      total_izin: totalIzin,
+      total_sakit: totalSakit,
+      total_cuti: totalCuti,
+      total_tanpa_keterangan: totalTanpaKeterangan,
+      persen_kehadiran: Math.round(persenKehadiran),
+      status: statusKehadiran,
+      warna_status: warnaKehadiran
+    },
+    grafik_performa_harian: grafikPerformaHarian,
+    grafik_kehadiran: grafikKehadiran,
+    // PERUBAHAN: target_vs_realisasi dengan target_bulanan tunggal
+    target_vs_realisasi: {
+      kr: { 
+        realisasi: Math.round(totalKR), 
+        target: targetBulanan, 
+        persen: Math.round(pencapaianKR) 
+      },
+      kn: { 
+        realisasi: Math.round(totalKN), 
+        target: targetBulanan, 
+        persen: Math.round(pencapaianKN) 
+      },
+      total: { 
+        realisasi: Math.round(totalPanjang), 
+        target: targetBulanan, 
+        persen: Math.round(pencapaianTotal) 
+      }
+    },
+    detail_laporan_harian: detailLaporanHarian,
+    detail_kehadiran_harian: detailKehadiranHarian,
+    rekomendasi: rekomendasi
+  };
+}
 };
 
 module.exports = KinerjaService;
